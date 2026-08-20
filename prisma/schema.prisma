@@ -1,5 +1,11 @@
-// Phase 0: schema scaffold only. No models yet — see implementation-plan.md
-// for when Organization/User/Channel/Contact/Conversation/Message land.
+// Phase 0 scaffolded the generator/datasource block only.
+// M1 adds Organization/User + Role — see implementation-plan.md for what
+// lands in later milestones (Channel/Contact/Conversation/Message at M2+).
+//
+// Prisma 7: the datasource block no longer carries a `url` — the connection
+// string is supplied to PrismaClient via a driver adapter (see
+// src/lib/prisma.ts) and to the CLI (migrate/studio/seed) via
+// prisma.config.ts. See https://pris.ly/d/prisma7-client-config.
 
 generator client {
   provider = "prisma-client-js"
@@ -7,5 +13,36 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+// --- M1: tenancy and identity ------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users     User[]
+}
+
+model User {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  passwordHash   String
+  name           String
+  role           Role      @default(AGENT)
+  isOnline       Boolean   @default(false)
+  lastSeenAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+}
+
+enum Role {
+  ADMIN // full access, manages channels, templates, users
+  AGENT // sees assigned + unassigned conversations, sends messages
 }
