@@ -23,6 +23,8 @@ model Organization {
   createdAt DateTime @default(now())
 
   users     User[]
+  channels  Channel[]
+  contacts  Contact[]
 }
 
 model User {
@@ -45,4 +47,196 @@ model User {
 enum Role {
   ADMIN // full access, manages channels, templates, users
   AGENT // sees assigned + unassigned conversations, sends messages
+}
+
+// --- M2: provider adapter + ingestion (Phase A / Baileys) ---------------
+// Channel/Contact/Conversation/Message match context.md §7.2-7.4 and
+// architecture.md verbatim. Back-reference array/optional fields not shown
+// in those sections (e.g. Organization.channels above, Channel.conversations
+// below) are added only where Prisma's relation validation requires them for
+// a `@relation` declared on the other side — no relation exists for
+// Conversation/Message's organizationId, or for Conversation.assignedUserId
+// / Message.sentByUserId, matching context.md exactly (those stay plain
+// scalars, not enforced foreign keys).
+
+model Channel {
+  id                String        @id @default(cuid())
+  organizationId    String
+  displayName       String
+  phoneNumber       String
+  provider          String        @default("baileys")
+  metaPhoneNumberId String?       @unique
+  metaWabaId        String?
+  sessionRef        String?
+  accessTokenRef    String?
+  qualityRating     String?
+  messagingTier     String?
+  status            ChannelStatus @default(ACTIVE)
+  createdAt         DateTime      @default(now())
+
+  organization      Organization  @relation(fields: [organizationId], references: [id])
+  conversations     Conversation[]
+
+  // Baileys session storage (src/providers/baileys/session-store.ts) —
+  // present regardless of `provider`, simply unused when provider is
+  // "cloud-api". See BaileysSessionData/BaileysSignalKey below for why this
+  // is two tables rather than one JSON blob on Channel itself.
+  baileysSession    BaileysSessionData?
+  baileysSignalKeys BaileysSignalKey[]
+
+  @@index([organizationId])
+}
+
+enum ChannelStatus {
+  ACTIVE
+  DISCONNECTED
+  SUSPENDED
+}
+
+model Contact {
+  id             String   @id @default(cuid())
+  organizationId String
+  waId           String
+  name           String?
+  displayName    String?
+  customFields   Json     @default("{}")
+  isBlocked      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  conversations  Conversation[]
+
+  @@unique([organizationId, waId])
+  @@index([organizationId])
+}
+
+model Conversation {
+  id             String    @id @default(cuid())
+  organizationId String
+  channelId      String
+  contactId      String
+  assignedUserId String?
+  status         ConversationStatus @default(OPEN)
+  lastMessageAt  DateTime?
+  lastInboundAt  DateTime?
+  unreadCount    Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  channel        Channel   @relation(fields: [channelId], references: [id])
+  contact        Contact   @relation(fields: [contactId], references: [id])
+  messages       Message[]
+
+  @@unique([channelId, contactId])
+  @@index([organizationId, status, lastMessageAt])
+  @@index([assignedUserId])
+}
+
+enum ConversationStatus {
+  OPEN
+  DONE
+}
+
+model Message {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  conversationId     String
+  provider           String
+  providerMessageId  String?  @unique
+  direction          Direction
+  type               MessageType
+  body               String?
+  mediaId            String?
+  templateName       String?
+  templatePayload    Json?
+  interactivePayload Json?
+  // Deliberate addition beyond context.md §7.4's literal column list: the
+  // milestone's own acceptance test requires proving an UNSUPPORTED-typed
+  // inbound message stores its original payload ("raw preserved"), and
+  // NormalizedInboundEvent.raw ("always preserve the original payload",
+  // src/providers/types.ts) has to land somewhere durable to mean that.
+  // Flagged in TODO-VERIFY.md rather than silently added.
+  rawPayload         Json?
+  status             MessageStatus @default(PENDING)
+  errorCode          String?
+  errorMessage       String?
+  sentByUserId       String?
+  metaTimestamp      DateTime
+  createdAt          DateTime @default(now())
+
+  conversation       Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId, metaTimestamp])
+  @@index([organizationId])
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  INTERACTIVE
+  TEMPLATE
+  BUTTON
+  REACTION
+  UNSUPPORTED
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// --- M2: Baileys session credential storage ------------------------------
+// Baileys' own `useMultiFileAuthState` helper persists to local disk, which
+// (a) does not survive a redeploy and (b) is explicitly disallowed here
+// (context.md §8.1b: "Session credentials persist to the database or object
+// storage... not to local disk"). These two tables are the from-scratch
+// AuthenticationState backing store used by
+// src/providers/baileys/session-store.ts. `Channel.sessionRef` holds this
+// row's id as the documented "pointer to stored Baileys session state"
+// (context.md §7.2).
+//
+// Split into two tables rather than one JSON blob because they change at
+// very different rates: `creds` is one small object updated occasionally
+// (on `creds.update`); signal protocol key material (pre-keys, sessions,
+// sender keys, app-state sync keys, ...) is many small, independently
+// keyed entries read/written constantly during normal operation — cramming
+// both into a single ever-growing JSON column would mean a read-modify-
+// write of the whole blob for every single key touched.
+model BaileysSessionData {
+  id        String   @id @default(cuid())
+  channelId String   @unique
+  creds     Json?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  channel   Channel  @relation(fields: [channelId], references: [id])
+}
+
+model BaileysSignalKey {
+  id        String   @id @default(cuid())
+  channelId String
+  // SignalDataTypeMap key from @whiskeysockets/baileys, e.g. "pre-key",
+  // "session", "sender-key", "app-state-sync-key", "app-state-sync-version".
+  category  String
+  keyId     String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  channel   Channel  @relation(fields: [channelId], references: [id])
+
+  @@unique([channelId, category, keyId])
+  @@index([channelId, category])
 }

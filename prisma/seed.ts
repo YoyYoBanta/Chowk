@@ -14,8 +14,9 @@
  * real secrets, never used outside a local/dev database.
  */
 import { prisma } from "../src/lib/prisma";
-import { createOrganization } from "../src/data/organizations";
+import { createOrganization, listOrganizations } from "../src/data/organizations";
 import { createUser } from "../src/data/users";
+import { createChannel, listChannelsInOrg } from "../src/data/channels";
 import { hashPassword } from "../src/lib/auth/password";
 
 const DEV_PASSWORD = "chowk-dev-password";
@@ -56,11 +57,51 @@ async function seedM1TenancyAndUsers(): Promise<void> {
   console.log(`All seeded users share the dev password: "${DEV_PASSWORD}"`);
 }
 
+/**
+ * One Baileys channel per organization that doesn't already have one.
+ * Status is DISCONNECTED on purpose — there is no dedicated WhatsApp test
+ * number available yet (see TODO-VERIFY.md's M2 section), so seeding an
+ * ACTIVE channel here would misrepresent a session that doesn't exist.
+ * `phoneNumber` is a placeholder value (display-only field per
+ * context.md §7.2) until a real number is assigned to a channel.
+ *
+ * Written to be safe to re-run: it checks each organization for an
+ * existing channel first rather than unconditionally inserting (M1's own
+ * org/user seeding above is not itself idempotent — re-running `npm run
+ * seed` creates fresh duplicate organizations each time, same as before
+ * this milestone — so this only guards its own concern: never adding a
+ * second channel to an org row that already has one).
+ */
+async function seedM2Channels(): Promise<void> {
+  const orgs = await listOrganizations();
+  let created = 0;
+
+  for (const org of orgs) {
+    const existingChannels = await listChannelsInOrg(org.id);
+    if (existingChannels.length > 0) continue;
+
+    await createChannel(org.id, {
+      displayName: `${org.name} WhatsApp (Baileys, dev)`,
+      phoneNumber: "000000000000",
+      provider: "baileys",
+      status: "DISCONNECTED",
+    });
+    created += 1;
+  }
+
+  console.log(
+    `Seeded M2: ${created} Baileys channel(s), status DISCONNECTED (no live session — see TODO-VERIFY.md).`,
+  );
+}
+
 async function main(): Promise<void> {
   // --- M1: tenancy + auth skeleton ---
   await seedM1TenancyAndUsers();
 
-  // --- M2+: append new sections below this line, do not reorder above ---
+  // --- M2: provider adapter + ingestion ---
+  await seedM2Channels();
+
+  // --- M3+: append new sections below this line, do not reorder above ---
 }
 
 main()
