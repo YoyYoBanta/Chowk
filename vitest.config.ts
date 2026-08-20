@@ -10,6 +10,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Real-database integration tests (see vitest.integration.config.ts /
+    // `npm run test:integration`) live alongside their mocked counterparts
+    // but must never be picked up here — this is the suite that has to
+    // pass in a fresh clone with no database running.
+    exclude: ["**/node_modules/**", "src/**/*.integration.test.ts"],
     // src/config/env.ts validates process.env at import time and throws on
     // anything missing/invalid. Tests must be able to run in a fresh clone
     // with no local .env file (which is gitignored), so provide dummy —

@@ -1,0 +1,72 @@
+# Local dev infra: PostgreSQL + Redis (BullMQ, wired from M2 onward) +
+# MinIO (S3-compatible object storage, wired from M2 onward). See
+# architecture.md for the stack; see .env.example for the corresponding
+# env vars — the values below are chosen to match it exactly so copying
+# .env.example to .env "just works" against this compose file.
+#
+# Usage:
+#   docker compose up -d       # start all three in the background
+#   docker compose down        # stop them (add -v to also wipe the data
+#                               # volumes, e.g. to test a fresh migration)
+#
+# Then, from the app:
+#   npx prisma migrate deploy  # apply prisma/migrations/ to postgres
+#   npm run seed                # seed the M1 demo orgs/users
+#
+# Not exercised by CI or by any test in this repo yet (Redis/MinIO have no
+# callers until M2) — this file exists so the local-dev loop is a single
+# command once Docker is available, here or on a real dev machine.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: chowk
+    ports:
+      - "5432:5432"
+    volumes:
+      - chowk_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d chowk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - chowk_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: replace-with-access-key
+      MINIO_ROOT_PASSWORD: replace-with-secret-key
+    ports:
+      - "9000:9000" # S3 API — matches OBJECT_STORAGE_ENDPOINT
+      - "9001:9001" # web console
+    volumes:
+      - chowk_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  chowk_postgres_data:
+  chowk_redis_data:
+  chowk_minio_data:
