@@ -1,0 +1,11 @@
+// Phase 0: schema scaffold only. No models yet — see implementation-plan.md
+// for when Organization/User/Channel/Contact/Conversation/Message land.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
