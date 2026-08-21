@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth/guard";
 import { getConversationWithContact } from "@/data/conversations";
 import { listMessagesPage } from "@/data/messages";
+import { attachMediaSummaries } from "@/data/media";
 import { getWindowState } from "@/services/window";
 import { ThreadView } from "../../_components/thread-view";
 import { ContactPanel } from "../../_components/contact-panel";
@@ -53,7 +54,9 @@ export default async function ConversationThreadPage({
     },
   };
 
-  const initialMessagesNewestFirst: MessageDTO[] = items.map((message) => ({
+  const enrichedItems = await attachMediaSummaries(session.organizationId, items);
+
+  const initialMessagesNewestFirst: MessageDTO[] = enrichedItems.map((message) => ({
     id: message.id,
     conversationId: message.conversationId,
     provider: message.provider,
@@ -68,6 +71,7 @@ export default async function ConversationThreadPage({
     errorMessage: message.errorMessage,
     metaTimestamp: message.metaTimestamp.toISOString(),
     createdAt: message.createdAt.toISOString(),
+    media: message.media,
   }));
 
   return (

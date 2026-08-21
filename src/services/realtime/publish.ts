@@ -2,6 +2,7 @@ import IORedis from "ioredis";
 import type { Message } from "@prisma/client";
 import { env } from "@/config/env";
 import { logger } from "@/lib/logging/logger";
+import { attachMediaSummary, type MessageWithMediaSummary } from "@/data/media";
 
 /**
  * Realtime fan-out for the SSE endpoint (architecture.md §11,
@@ -29,11 +30,37 @@ import { logger } from "@/lib/logging/logger";
  * correctly.
  */
 
+/**
+ * M6: best-effort media enrichment shared by all three publish functions
+ * below — a wire event's `message` always carries `media` (its summary, or
+ * null), same as the REST DTOs (src/data/media.ts's attachMediaSummary is
+ * the single shared implementation). Wrapped in its own try/catch — never
+ * lets a media lookup failure block the whole publish, since the message
+ * itself is already durably persisted regardless (same "never throw past
+ * this function" discipline the rest of this file already follows for the
+ * Redis publish itself).
+ */
+async function attachMediaSafely(
+  organizationId: string,
+  message: Message,
+): Promise<MessageWithMediaSummary> {
+  try {
+    return await attachMediaSummary(organizationId, message);
+  } catch (error) {
+    logger.error("realtime publish: failed to attach media summary — publishing without it", {
+      organizationId,
+      messageId: message.id,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return { ...message, media: null };
+  }
+}
+
 export interface MessageCreatedEvent {
   type: "message.created";
   organizationId: string;
   conversationId: string;
-  message: Message;
+  message: MessageWithMediaSummary;
 }
 
 export function realtimeChannelForOrg(organizationId: string): string {
@@ -76,7 +103,7 @@ export async function publishMessageCreated(
     type: "message.created",
     organizationId,
     conversationId,
-    message,
+    message: await attachMediaSafely(organizationId, message),
   };
 
   try {
@@ -116,7 +143,7 @@ export interface MessageStatusChangedEvent {
   type: "message.status_changed";
   organizationId: string;
   conversationId: string;
-  message: Message;
+  message: MessageWithMediaSummary;
 }
 
 export async function publishMessageStatusChanged(
@@ -129,7 +156,7 @@ export async function publishMessageStatusChanged(
     type: "message.status_changed",
     organizationId,
     conversationId,
-    message,
+    message: await attachMediaSafely(organizationId, message),
   };
 
   try {
@@ -144,6 +171,58 @@ export async function publishMessageStatusChanged(
     });
   } catch (error) {
     logger.error("failed to publish realtime status-changed event", {
+      organizationId,
+      conversationId,
+      messageId: message.id,
+      correlationId: fields.correlationId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * M6 addition: `message.updated` — published by src/services/media/
+ * download-and-store.ts once an inbound message's media finishes
+ * downloading and `Message.mediaId` gets linked (a status-independent
+ * change; the message's `status` field means nothing for an INBOUND
+ * message, so reusing `message.status_changed` for this would be
+ * misleading). Same "carries the full row" contract as the other two
+ * events, and handled identically client-side (src/app/(dashboard)/
+ * dashboard/_components/thread-view.tsx: update in place by id, or append
+ * if unseen) — a generic "this message changed, here's its current state"
+ * event, not something the client needs to special-case.
+ */
+export interface MessageUpdatedEvent {
+  type: "message.updated";
+  organizationId: string;
+  conversationId: string;
+  message: MessageWithMediaSummary;
+}
+
+export async function publishMessageUpdated(
+  organizationId: string,
+  conversationId: string,
+  message: Message,
+  fields: { correlationId?: string } = {},
+): Promise<void> {
+  const event: MessageUpdatedEvent = {
+    type: "message.updated",
+    organizationId,
+    conversationId,
+    message: await attachMediaSafely(organizationId, message),
+  };
+
+  try {
+    await getPublisher().publish(realtimeChannelForOrg(organizationId), JSON.stringify(event));
+    logger.info("published realtime message-updated event", {
+      organizationId,
+      conversationId,
+      messageId: message.id,
+      correlationId: fields.correlationId,
+      route: "realtime.publish",
+    });
+  } catch (error) {
+    logger.error("failed to publish realtime message-updated event", {
       organizationId,
       conversationId,
       messageId: message.id,

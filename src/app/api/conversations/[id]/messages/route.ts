@@ -3,8 +3,9 @@ import { z } from "zod";
 import { requireApiSession } from "@/lib/auth/guard";
 import { getConversationById } from "@/data/conversations";
 import { listMessagesPage, type MessageCursor } from "@/data/messages";
+import { attachMediaSummaries, attachMediaSummary } from "@/data/media";
 import { decodeCursor, paginationQuerySchema, type PaginationQuery } from "@/lib/validation/pagination";
-import { sendTextMessage } from "@/services/messages/send-message";
+import { sendMediaMessage, sendTextMessage, type SendMessageResult } from "@/services/messages/send-message";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
@@ -63,6 +64,11 @@ export async function GET(
       limit: query.limit,
       cursor,
     });
+    // M6: attach each message's media summary (null if it has none, or has
+    // media still downloading — src/services/media/download-and-store.ts)
+    // — one batched query for the whole page (src/data/media.ts's
+    // attachMediaSummaries), not one per message.
+    const messages = await attachMediaSummaries(organizationId, items);
 
     logger.info("request end", {
       organizationId,
@@ -70,10 +76,10 @@ export async function GET(
       route,
       conversationId,
       statusCode: 200,
-      count: items.length,
+      count: messages.length,
     });
 
-    return NextResponse.json({ messages: items, nextCursor });
+    return NextResponse.json({ messages, nextCursor });
   } catch (error) {
     logger.error("request failed", {
       organizationId,
@@ -87,29 +93,32 @@ export async function GET(
 }
 
 /**
- * POST /api/conversations/:id/messages — send a text message
- * (context.md §9; architecture.md §7's full sequence lives in
- * src/services/messages/send-message.ts, this route only validates the
- * body and delegates). Text-only this milestone: media/template sends
- * are M6/M7, so the schema below has no `type`/`mediaId`/`templateName`
- * fields at all — a body carrying them is simply ignored (zod strips
- * unknown keys by default), never half-interpreted as a media/template
- * send.
+ * POST /api/conversations/:id/messages — send a message: text (JSON body)
+ * or media (multipart/form-data) — context.md §9's single documented route
+ * for "send (text | media | template)". Content-Type dispatches which:
+ *  - `application/json` — the M4/M5 text path, unchanged.
+ *  - `multipart/form-data` — M6: a `file` field (the attachment) and an
+ *    optional `caption` field. No `type` is sent by the client; the
+ *    message's MessageType is derived server-side from the file's MIME
+ *    type (src/services/media/limits.ts), never trusted from the request.
  *
- * 24-hour window enforcement (M5): `sendTextMessage` itself checks the
- * window BEFORE creating any row (src/services/window.ts /
- * src/services/messages/send-message.ts's own doc comment) and returns a
- * structured rejection rather than throwing. This route only translates
- * that into the actual HTTP response — a window-closed send comes back as
- * a real `409` with `{ error, code: "WINDOW_CLOSED" }`, so a direct API
- * call (not just the UI) is rejected exactly the same way the UI's own
- * disabled composer state prevents in the first place (context.md's M5
- * done-criterion: "a direct API call bypassing the UI is rejected with a
- * structured error").
+ * Both paths delegate to src/services/messages/send-message.ts, which is
+ * where the real sequence (window check → PENDING row → enqueue) lives —
+ * this route only validates the request shape and translates the result
+ * into HTTP.
  *
- * Returns 202 (accepted, not yet delivered) with the PENDING message row —
- * matching architecture.md §7's sequence diagram exactly ("Svc-->>API: 202
- * { messageId, status: PENDING }").
+ * 24-hour window enforcement (M5, unchanged, applies to media too —
+ * context.md §4.1: media is a free-form send): a window-closed rejection
+ * comes back as a real `409` with `{ error, code: "WINDOW_CLOSED" }` for
+ * either path, so a direct API call is rejected exactly the same way the
+ * UI's disabled composer state prevents in the first place.
+ *
+ * Returns 202 (accepted, not yet delivered) with the PENDING message row,
+ * enriched with its media summary (src/data/media.ts's attachMediaSummary
+ * — null for a text send, or for a media send whose Media row was just
+ * created a moment earlier in this same request) — matching
+ * architecture.md §7's sequence diagram ("Svc-->>API: 202 { messageId,
+ * status: PENDING }").
  */
 const sendMessageBodySchema = z.object({
   body: z.string().trim().min(1, "Message body cannot be empty").max(4096),
@@ -129,39 +138,68 @@ export async function POST(
 
   logger.info("request start", { organizationId, correlationId, route, conversationId, userId });
 
-  let json: unknown;
-  try {
-    json = await request.json();
-  } catch {
-    logger.warn("request end", {
-      organizationId,
-      correlationId,
-      route,
-      conversationId,
-      statusCode: 400,
-      reason: "invalid json",
-    });
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const contentType = request.headers.get("content-type") ?? "";
 
-  const parsed = sendMessageBodySchema.safeParse(json);
-  if (!parsed.success) {
-    logger.warn("request end", {
-      organizationId,
-      correlationId,
-      route,
-      conversationId,
-      statusCode: 400,
-      reason: "invalid body",
-    });
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-  }
-
+  let result: SendMessageResult;
   try {
-    const result = await sendTextMessage(
-      { organizationId, conversationId, userId, body: parsed.data.body },
-      { correlationId },
-    );
+    if (contentType.startsWith("multipart/form-data")) {
+      let form: FormData;
+      try {
+        form = await request.formData();
+      } catch {
+        logger.warn("request end", {
+          organizationId, correlationId, route, conversationId, statusCode: 400, reason: "invalid form data",
+        });
+        return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+      }
+
+      const file = form.get("file");
+      if (!(file instanceof File)) {
+        logger.warn("request end", {
+          organizationId, correlationId, route, conversationId, statusCode: 400, reason: "missing file",
+        });
+        return NextResponse.json({ error: "Missing file" }, { status: 400 });
+      }
+      const captionRaw = form.get("caption");
+      const caption = typeof captionRaw === "string" && captionRaw.trim() ? captionRaw.trim() : null;
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      result = await sendMediaMessage(
+        {
+          organizationId,
+          conversationId,
+          userId,
+          file: buffer,
+          mimeType: file.type || "application/octet-stream",
+          fileName: file.name || null,
+          caption,
+        },
+        { correlationId },
+      );
+    } else {
+      let json: unknown;
+      try {
+        json = await request.json();
+      } catch {
+        logger.warn("request end", {
+          organizationId, correlationId, route, conversationId, statusCode: 400, reason: "invalid json",
+        });
+        return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      }
+
+      const parsed = sendMessageBodySchema.safeParse(json);
+      if (!parsed.success) {
+        logger.warn("request end", {
+          organizationId, correlationId, route, conversationId, statusCode: 400, reason: "invalid body",
+        });
+        return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+      }
+
+      result = await sendTextMessage(
+        { organizationId, conversationId, userId, body: parsed.data.body },
+        { correlationId },
+      );
+    }
 
     if (!result.ok) {
       logger.info("request end", {
@@ -178,6 +216,7 @@ export async function POST(
       );
     }
 
+    const enriched = await attachMediaSummary(organizationId, result.message);
     logger.info("request end", {
       organizationId,
       correlationId,
@@ -186,7 +225,7 @@ export async function POST(
       statusCode: 202,
       messageId: result.message.id,
     });
-    return NextResponse.json({ message: result.message }, { status: 202 });
+    return NextResponse.json({ message: enriched }, { status: 202 });
   } catch (error) {
     logger.error("request failed", {
       organizationId,

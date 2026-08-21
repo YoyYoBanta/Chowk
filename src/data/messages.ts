@@ -94,6 +94,13 @@ export interface CreatePendingOutboundMessageInput {
   provider: string;
   type: MessageType;
   body?: string | null;
+  /** M6: set for a media send — the caller (src/services/messages/
+   * send-message.ts's sendMediaMessage) has already created the `Media`
+   * row via src/services/media/upload-outbound.ts before this call, so the
+   * PENDING row is created with mediaId already populated (unlike an
+   * inbound media message, whose mediaId is null until the async
+   * download-and-store pipeline links it later). */
+  mediaId?: string | null;
   sentByUserId: string;
   metaTimestamp?: Date;
 }
@@ -119,10 +126,26 @@ export async function createPendingOutboundMessage(
       direction: "OUTBOUND",
       type: input.type,
       body: input.body ?? null,
+      mediaId: input.mediaId ?? null,
       status: "PENDING",
       sentByUserId: input.sentByUserId,
       metaTimestamp: input.metaTimestamp ?? new Date(),
     },
+  });
+}
+
+/** download-and-store-media's terminal write (M6, architecture.md §8):
+ * links a downloaded-and-stored inbound Media row to the message that
+ * referenced it. Never called for an outbound media message — those get
+ * `mediaId` set at creation time (createPendingOutboundMessage above). */
+export async function linkMessageMedia(
+  organizationId: string,
+  messageId: string,
+  mediaId: string,
+): Promise<void> {
+  await prisma.message.updateMany({
+    where: { id: messageId, organizationId },
+    data: { mediaId },
   });
 }
 

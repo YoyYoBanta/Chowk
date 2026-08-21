@@ -625,3 +625,341 @@ verified for real against Postgres (`src/services/messages/
 send-message.window.integration.test.ts`), including a real HTTP request
 through the exported route handler — see PROGRESS.md's M5 section for the
 full list of what was actually run and the real output it produced.
+
+## M6 — Media
+
+**The live-number gap, as it applies to this milestone**, ~~now compounded by
+a second, new gap — no reachable object storage either~~.
+
+**VERIFIED 2026-08-21 (post-merge verification pass)**: the object-storage
+half of this gap is now closed. A real MinIO server was started for the
+first time in this repo's history (standalone Windows `minio.exe`/`mc.exe`
+binaries — no Docker reachable in this verification environment either,
+same as every prior milestone's own infra story) and the `chowk` bucket was
+created by hand via `mc mb local/chowk` exactly as `docker-compose.yml`'s
+comment prescribes. `src/lib/storage/object-store.ts`'s three exported
+functions were exercised directly against it, outside the (still-mocked,
+deliberately — see below) integration suite: a real `PutObjectCommand`
+followed by a real `GetObjectCommand`, confirming
+`Body.transformToByteArray()` and `Body.transformToWebStream()` are real,
+correctly-typed `SdkStreamMixin` methods (matching exactly what was
+confirmed via `WebFetch` against `@smithy/types`' `.d.ts` at authoring
+time — not a guess that turned out wrong) that round-trip the exact bytes
+written, with the correct `ContentType`/`ContentLength` read back. This
+closes the "confirmed via WebFetch but never exercised against a real S3
+response object" gap noted below. **The live-WhatsApp-number half of the
+gap remains open** — same root cause as every prior milestone's live-number
+note: there is still no dedicated WhatsApp test number, so the literal "an
+image sent from a phone renders in the thread" half of this milestone's
+done-criterion cannot be checked against a real phone/session.
+
+Two mocked seams were used in this milestone's integration tests, not one
+— this is unchanged by the above; `src/lib/storage/object-store.ts` stays
+mocked in the automated `test:integration` suite specifically (its real
+behavior was instead confirmed by the standalone smoke test described
+above, run separately, not by un-mocking it in the suite itself — the
+mocking choice documented below is still the right call for a suite that
+must stay fast and not depend on a running MinIO):
+
+- `src/providers/factory.ts` — the same sanctioned seam every prior
+  milestone's send-pipeline tests already use.
+- `src/lib/storage/object-store.ts` (new) — mocked in
+  `src/services/media/download-and-store.integration.test.ts`,
+  `src/services/messages/send-message.media.integration.test.ts`, and
+  `src/app/api/conversations/[id]/messages/media-route.integration.test.ts`.
+
+What this proves for real (real Postgres, real BullMQ where the test says
+so): the `Media` row's fields, `Message.mediaId` linking, the
+download-media job's idempotency (a redelivered job never re-downloads or
+creates a second row), the ingest-inbound consumer's same-tick enqueue of
+a real `download-media` BullMQ job with the correct payload, the full
+outbound media send pipeline through the real `send-message` consumer
+(`uploadMedia()` then `sendMedia()`, in that order, with the right
+`channelId`/`to`/`caption`), the 24h-window/file-validation rejections
+creating zero rows, and a real HTTP `multipart/form-data` POST through the
+actual exported route handler being parsed and dispatched correctly.
+~~What is NOT verified for real: `putObject`/`getObjectBuffer`/
+`getObjectStream` actually reaching a real S3-compatible bucket~~, ~~and
+Baileys' `downloadContentFromMessage`/real `sock.sendMessage()` media calls
+against an actual encrypted payload from a live session~~.
+
+~~**VERIFIED 2026-08-21**: `putObject`/`getObjectBuffer`/`getObjectStream`
+now confirmed against a real MinIO instance (see above) — this half of the
+"not verified" note is closed. The Baileys half (`downloadContentFromMessage`/
+real `sock.sendMessage()` media calls against an actual encrypted payload)
+remains open — no live WhatsApp session exists to exercise it against, same
+as every prior milestone's live-number gap.~~
+
+**Once a dedicated test number exists** (the MinIO half of this instruction
+is now done — see above, and skip straight to standing up a channel):
+`docker compose up -d` (or the standalone-binary equivalent used in this
+verification pass), create the `chowk` bucket (see `docker-compose.yml`'s
+new comment above the `minio` service — MinIO does not auto-create
+buckets), then run `npm run worker` with an ACTIVE Baileys channel: send a
+real photo from a personal phone and confirm it renders in the thread
+within a few seconds (not just a `Media` row appearing in a test
+assertion); then send a photo from the UI's new attachment button and
+confirm it arrives on the phone. Both should still render 24 hours later
+(the milestone's literal second half of its done-criterion) — nothing
+about this codebase's storage keys expire or get cleaned up, so this
+should hold structurally, but has never been observed for real over a real
+24-hour span.
+
+**Real Baileys/AWS SDK API shapes used, and how they were confirmed (not
+guessed, per context.md rule 1/2) — this milestone leaned on `WebFetch`
+against the actual package source/docs since no `node_modules` exists in
+this environment either (see Phase 0's PROGRESS.md note — every milestone
+so far has been verified in a separate cloud agent environment, not
+locally):**
+
+- `downloadContentFromMessage({ mediaKey, directPath, url }, type, opts?): Promise<Transform>`
+  — fetched directly from
+  `https://unpkg.com/@whiskeysockets/baileys@6.7.24/lib/Utils/messages-media.d.ts`.
+  `DownloadableMessage = { mediaKey?: Uint8Array | null; directPath?: string | null; url?: string | null }`
+  and `WAMediaUpload = Buffer | { stream: Readable } | { url: URL | string }`
+  — fetched from
+  `https://raw.githubusercontent.com/WhiskeySockets/Baileys/v6.7.24/src/Types/Message.ts`.
+  Confirmed exported from the package's public `Utils` barrel (`export *
+  from './messages-media.js'`), the same barrel M2 already confirmed
+  `getContentType`/`toNumber`/`WAMessageStatus` are re-exported from at the
+  package root — `downloadContentFromMessage` is imported the identical
+  way (`from "@whiskeysockets/baileys"` directly) in
+  `src/providers/baileys/adapter.ts`.
+- `AnyRegularMessageContent`'s image/video/audio/document/sticker members
+  (`{ image: WAMediaUpload; caption?; jpegThumbnail? } & Mentionable & Contextable & WithDimensions`,
+  etc.) — fetched from the same `src/Types/Message.ts` source file. `{
+  mimetype?: string } & Editable` is added to every media variant (source
+  quoted this directly), which is what makes setting `mimetype` on all four
+  of `buildBaileysMediaContent`'s branches valid even though only the
+  `document` variant's `mimetype` is REQUIRED (also confirmed directly).
+  `AnyMessageContent` itself (the exported type name `sock.sendMessage()`'s
+  second parameter actually uses) was separately confirmed present and
+  exported in `Types/Message.d.ts` via the compiled `unpkg` `.d.ts`, not
+  just the `.ts` source, to rule out a source/build drift.
+- `MediaType = keyof typeof MEDIA_HKDF_KEY_MAPPING`, and the mapping's real
+  keys (`audio, document, gif, image, ppic, product, ptt, sticker, video,
+  thumbnail-*, md-msg-hist, md-app-state, product-catalog-image,
+  payment-bg-image, ptv`) — fetched from
+  `https://raw.githubusercontent.com/WhiskeySockets/Baileys/v6.7.24/src/Defaults/index.ts`.
+  Confirms `baileysMediaTypeFromMime`'s four return values
+  (`"image"|"video"|"audio"|"document"`) are all valid `MediaType` strings,
+  and that `image`/`sticker` share the same HKDF label ("Image") — the
+  basis for treating a `sticker` (`image/webp`) as `'image'` for decryption
+  purposes rather than threading a separate sticker flag through
+  `MediaReference`.
+- `LocationMessage`'s real field names (`degreesLatitude`, `degreesLongitude`,
+  both `optional double`, plus `name`/`address`/`url`) — fetched from
+  `https://raw.githubusercontent.com/WhiskeySockets/Baileys/v6.7.24/WAProto/WAProto.proto`
+  after two failed attempts against other candidate URLs (a 404 on
+  `WAMessage.proto`, and a truncated/incomplete `unpkg` `.d.ts` fetch that
+  didn't reach the relevant section) — not guessed as a fallback when the
+  first fetch failed.
+- `@smithy/types`' `SdkStreamMixin` interface
+  (`transformToByteArray(): Promise<Uint8Array>`,
+  `transformToString(encoding?): Promise<string>`,
+  `transformToWebStream(): ReadableStream`) — fetched from
+  `https://unpkg.com/@smithy/types/dist-types/serde.d.ts`, confirming
+  `GetObjectCommandOutput.Body` really does carry these three methods
+  before `src/lib/storage/object-store.ts` was written to rely on
+  `transformToByteArray()`/`transformToWebStream()` rather than
+  hand-rolling a Node-stream-to-buffer collector.
+- Meta WhatsApp Cloud API media type/size limits
+  (`src/services/media/limits.ts`) — fetched live from
+  `https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media`
+  on 2026-08-21 (image: jpeg/png, 5MB; video: mp4/3gpp, 16MB; audio:
+  mpeg/aac/amr/mp4/ogg, 16MB; document: pdf/docx/xlsx/pptx/txt, 100MB;
+  sticker: webp, 100KB static/500KB animated — sticker limits not currently
+  enforced anywhere since Tier 1 has no outbound sticker send path,
+  context.md §8.2). context.md §4.3/rule 1 both warn these numbers "changed
+  materially" before and should not be trusted indefinitely — re-verify
+  against live docs before a production deploy, not just once at
+  implementation time.
+
+**Judgment calls made building this milestone, flagged rather than silently
+decided:**
+
+- **`Message.mediaId` is deliberately left `null` at inbound-ingest time,
+  not set to `event.media.id`.** The M2-era `ingest-inbound.consumer.ts`
+  code actually had a real, if latent, bug here — it stored the provider's
+  own transient media reference (a Baileys `directPath`/Meta media id) into
+  `mediaId` as if it were a `Media.id` foreign key, which it never was (no
+  `Media` model existed until this milestone). Fixed as part of this
+  milestone's own work, not a separate bugfix, since the bug and the
+  feature are the same code path (see `src/worker/consumers/
+  ingest-inbound.consumer.ts`'s doc comment on the `createMessage` call).
+- **Outbound media re-uploads to the provider on every send attempt,
+  including a BullMQ retry — no provider-side media id is cached and
+  reused.** `Media.metaMediaId` exists in the schema (context.md §7.5) and
+  was considered for exactly this caching purpose, but rejected for the
+  reason spelled out in `src/services/media/upload-outbound.ts`'s doc
+  comment on `uploadStoredMediaToProvider`: Baileys' own `uploadMedia()`
+  only keeps the buffer in an adapter-local in-memory `Map`
+  (`outboundMediaCache`), which a Worker restart between "upload" and a
+  later retry's "send" would silently empty — caching and reusing an id
+  across that gap would produce a permanently-broken reference instead of
+  a harmless one. Always re-uploading fresh sidesteps the trap entirely, at
+  the cost of a real but minor inefficiency once Phase B (M10) makes
+  `uploadMedia()` a genuine, durable Meta upload — worth reconsidering
+  `metaMediaId` caching specifically for the Cloud API adapter once that
+  milestone exists to observe real retry patterns against.
+- **`downloadMedia()` buffers the entire file into memory rather than
+  streaming it straight to object storage.** Simpler, and safe given Tier
+  1's own 100MB ceiling (`src/services/media/limits.ts`) — worth revisiting
+  only if a future tier needs to handle materially larger files.
+- **The `Media` model has no Prisma relation to `Message`** — `mediaId`
+  stays a plain scalar, resolved only through `src/data/media.ts`'s own
+  organizationId-scoped functions (`attachMediaSummary`/
+  `attachMediaSummaries`), mirroring the exact precedent
+  `prisma/schema.prisma`'s M2-era comment already set for
+  `Conversation.assignedUserId`/`Message.sentByUserId`. A batched lookup
+  (`attachMediaSummaries`, one query per page) is used everywhere a list of
+  messages crosses the wire, rather than relying on a Prisma `include` that
+  doesn't exist.
+- **`GET /api/media/:id` is a new route not listed in context.md §9's
+  literal API surface.** That section predates the object-storage design
+  decision (context.md §14 item 3, resolved Pre-M1); some authenticated,
+  organizationId-scoped URL for the thread UI's `<img>`/`<video>`/
+  `<audio>`/document-download elements to point at is structurally
+  necessary for this milestone's own done-criterion to mean anything, and
+  streaming through an authenticated Next.js route (rather than a
+  presigned S3 URL handed straight to the browser) was chosen deliberately
+  — see the next point.
+- **`@aws-sdk/s3-request-presigner`, already a Phase-0-era dependency
+  (anticipating exactly this need), ended up unused.** A presigned URL
+  handed directly to the browser would mean the browser needs real network
+  access to `OBJECT_STORAGE_ENDPOINT` — fine for a local MinIO on
+  `localhost`, but that endpoint is typically an internal-only host in a
+  real deployment (a Docker service name, a private VPC address), not
+  something a browser can resolve. Streaming media through `GET
+  /api/media/:id` (which itself talks to object storage server-side) works
+  identically in both cases and keeps every media fetch behind the same
+  session check as everything else in this codebase, at the cost of
+  proxying bytes through the Next.js process rather than a direct
+  browser-to-storage transfer. Worth revisiting if a CDN/presigned-URL
+  approach becomes desirable for scale reasons later — the dependency is
+  already installed for exactly that pivot.
+- **MinIO does not auto-create its bucket.** `docker-compose.yml`'s
+  `minio` service comment now documents the one-time `mc mb` step — this is
+  a manual local-dev/ops step, not something `src/lib/storage/object-store.ts`
+  automates (an `ensureBucketExists()` on every call, or on first use, was
+  considered and rejected as unnecessary complexity for what is, in every
+  real deployment, a one-time infrastructure-provisioning step, not
+  something the application should be doing at runtime).
+- **Location messages store `"lat,lng"` as plain text in `Message.body`,
+  not a dedicated column.** context.md §7.4's literal schema has no
+  lat/lng fields, and inventing one felt like a bigger schema commitment
+  than this milestone's actual ask ("location (map link/coordinates)" in
+  the UI). `src/lib/messages/render.ts`'s `parseLocationBody` is the one
+  place this string shape is parsed back out — same "one place, not
+  scattered string-parsing" discipline as `src/services/window.ts`'s
+  `isWindowOpen`.
+
+### Post-merge verification (2026-08-21) — the full loop, run for real, for the first time
+
+~~**Unlike M1–M5, this milestone's own code was not run through
+`tsc`/`vitest`/`eslint`/`next build` at all before being committed.**~~
+
+~~**VERIFIED 2026-08-21**: the full loop now ran for real, in a genuinely
+fresh environment (no pre-existing `node_modules`, no pre-existing
+Postgres/Redis/MinIO state).~~ **Infra**: no Docker reachable in this
+verification environment (same as every prior milestone's own story) — a
+portable Node.js v22.14.0, PostgreSQL 16.4, Redis 5.0.14.1, and (new this
+milestone) a real MinIO server were all stood up from standalone Windows
+binaries. PostgreSQL's own binaries turned out to need the Microsoft
+Visual C++ 2015-2022 x64 redistributable (`vcruntime140.dll`/
+`msvcp140.dll`), which is not present on a bare Windows install and could
+not be installed system-wide in this sandbox (no admin rights — the
+installer hangs indefinitely waiting on a UAC elevation prompt that never
+comes). Worked around by copying `vcruntime140.dll`/`vcruntime140_1.dll`
+(already present locally, bundled with PostgreSQL's own pgAdmin 4 Python
+distribution) and `msvcp140.dll` (already present locally, bundled with
+Microsoft Edge) directly into `pgsql\bin\` alongside `initdb.exe`/
+`postgres.exe` — Windows' DLL search order checks an executable's own
+directory before `System32`, so this satisfies the dependency without any
+system-wide install or admin rights. Worth installing the VC++ redist
+properly (`https://aka.ms/vs/17/release/vc_redist.x64.exe`, needs admin)
+on any machine where admin rights are available, rather than relying on
+this workaround long-term.
+
+**Three real bugs found and fixed, none of them cosmetic:**
+
+1. **`src/providers/baileys/normalize.ts` used the `Long` type without
+   importing it.** `BaileysMediaContent.fileLength` is typed
+   `number | Long | null` (mirroring Baileys' own `toNumber()` signature in
+   `lib/Utils/generics.d.ts`, which itself references a bare `Long` with no
+   visible import in that file — invisible to us because `tsconfig.json`'s
+   `skipLibCheck: true` skips type-checking `node_modules` `.d.ts` files).
+   The identical bare reference in OUR OWN source is not exempt from
+   checking, so `tsc --noEmit` failed with `Cannot find name 'Long'`. Fixed
+   by adding `import type Long from "long";` — `long` is a real transitive
+   dependency of `@whiskeysockets/baileys` (via protobufjs) and was already
+   present in `node_modules`, so this needed no new dependency.
+2. **`src/lib/logging/logger.ts`'s `LogFields` interface was missing the
+   field names M6's new log call sites actually use.** `LogFields` is
+   deliberately closed (M3's design — see its own doc comment) so a real
+   call site needs its field added by name, not a widened index signature.
+   `tsc --noEmit` caught nine call sites across
+   `src/app/api/media/[id]/route.ts`, `src/services/media/download-and-store.ts`,
+   `src/services/messages/send-message.ts`, and
+   `src/worker/consumers/ingest-inbound.consumer.ts` using `mediaId`,
+   `mimeType`, `sizeBytes`, and `hasMedia` — none of them message content,
+   all legitimate metadata-about-a-file fields in the same spirit as the
+   existing `messageId`/`provider`/`messageType` fields. Fixed by adding
+   `mediaId?: string`, `mimeType?: string`, `sizeBytes?: number`, and
+   `hasMedia?: boolean` to `LogFields`. One further call site,
+   `src/worker/consumers/send-message.consumer.ts`'s "send-message job:
+   sending" log line, used an ad hoc `type: message.type` field where the
+   existing `messageType` field (already used one function away, in
+   `ingest-inbound.consumer.ts`'s "message ingested" log line, for the
+   identical concept) already covers it — fixed by renaming that one call
+   site's field to `messageType` instead of adding a near-duplicate `type`
+   field to the interface.
+3. **A pre-existing (not M6) migration-ordering bug, only surfaced because
+   this was the first time all three migrations were ever applied to a
+   genuinely empty database in one `prisma migrate deploy` run.**
+   `prisma/migrations/20260821000000_m1_tenancy`'s folder name sorts
+   *after* `20260820213005_m2_provider_and_ingestion`'s (2026-08-21 >
+   2026-08-20-21:30), so Prisma — which applies pending migrations in
+   ascending folder-name order — tried to apply M2's migration (which adds
+   a `Channel.organizationId` FK-shaped column referencing `Organization`)
+   before M1's migration (which creates the `Organization` table),
+   failing immediately with `relation "Organization" does not exist`. This
+   never surfaced in M1's, M2's, or M5's own "migrations apply cleanly"
+   verification because each of those sessions ran against a Postgres
+   instance that already had M1's migration applied from an earlier
+   session — the M1 migration was never pending at the same time as M2's
+   until this pass's genuinely fresh database. Fixed by renaming the M1
+   migration folder to `20260820200000_m1_tenancy` (sorts before M2's
+   `20260820213005`). Re-verified by dropping the database, recreating it
+   empty, and re-running `prisma migrate deploy` — all three migrations
+   now apply cleanly, in the correct order (M1 → M2 → M6), on the first
+   try. **If this repo's migration history is ever inspected against a
+   database that already recorded the old `20260821000000_m1_tenancy`
+   folder name in `_prisma_migrations`, the rename will look like a new,
+   unapplied migration** — this rename is safe for any environment whose
+   Postgres instance is being created fresh (true of every environment
+   this repo has been verified against so far, including this one), but
+   would need a manual `_prisma_migrations` row edit (or
+   `prisma migrate resolve`) instead of a plain `migrate deploy` on any
+   database that already has the old folder name recorded.
+
+**Verification commands, actual output, this pass:**
+
+- `npx tsc --noEmit` — clean, 0 errors (after fixes 1–2 above).
+- `npx eslint .` — 0 errors, 0 warnings. Both
+  `// eslint-disable-next-line @next/next/no-img-element` comments in
+  `message-bubble.tsx`'s `ImageContent` (the inline thumbnail and the
+  lightbox's full-size `<img>`) confirmed necessary and correctly placed —
+  temporarily removing one and re-running ESLint reproduces exactly one
+  `@next/next/no-img-element` violation at that line; restored immediately
+  after.
+- `npx vitest run` — 18 files, 101 tests, all passing.
+- `npm run test:integration` — 15 files, 46 tests, all passing against the
+  real Postgres + real Redis described above (`src/lib/storage/object-store.ts`
+  still mocked in this suite specifically, by design — see above).
+- `npm run build` — Next.js/Turbopack production build succeeds; every API
+  route including `/api/media/[id]` lists as dynamic (`ƒ`).
+- Manual smoke test of `src/lib/storage/object-store.ts` against the real
+  MinIO instance (outside the automated suite, since that suite
+  deliberately keeps object storage mocked) — see PROGRESS.md's M6
+  post-merge verification note for what this confirmed.

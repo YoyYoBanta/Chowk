@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { WAMessageStatus, type WAMessage, type WAMessageUpdate } from "@whiskeysockets/baileys";
 import {
+  baileysMediaTypeFromMime,
   digitsToJid,
   jidToDigits,
   normalizeBaileysMessage,
@@ -132,6 +133,64 @@ describe("normalizeBaileysMessage", () => {
     const msg = fakeMessage({ message: undefined });
     const event = normalizeBaileysMessage("channel-1", msg);
     expect(event?.type).toBe("UNSUPPORTED");
+  });
+
+  /**
+   * M6: mediaRefFrom must capture mediaKey/directPath/url — without
+   * mediaKey specifically, src/providers/baileys/adapter.ts's
+   * downloadMedia() cannot decrypt anything at all (Baileys media is
+   * end-to-end encrypted). This is the actual regression this milestone's
+   * inbound pipeline depends on.
+   */
+  it("captures mediaKey/directPath/url on an imageMessage's media reference (needed to decrypt it later)", () => {
+    const mediaKeyBytes = new Uint8Array([1, 2, 3, 4]);
+    const msg = fakeMessage({
+      message: {
+        imageMessage: {
+          mimetype: "image/jpeg",
+          directPath: "/v/abc123",
+          url: "https://mmg.whatsapp.net/abc123",
+          mediaKey: mediaKeyBytes,
+          fileLength: 999,
+        },
+      },
+    });
+    const event = normalizeBaileysMessage("channel-1", msg);
+    expect(event?.media).toMatchObject({
+      directPath: "/v/abc123",
+      url: "https://mmg.whatsapp.net/abc123",
+      mediaKey: Buffer.from(mediaKeyBytes).toString("base64"),
+    });
+  });
+
+  it("maps a locationMessage to LOCATION with 'lat,lng' captured as body", () => {
+    const msg = fakeMessage({
+      message: { locationMessage: { degreesLatitude: 12.9716, degreesLongitude: 77.5946 } },
+    });
+    const event = normalizeBaileysMessage("channel-1", msg);
+    expect(event?.type).toBe("LOCATION");
+    expect(event?.body).toBe("12.9716,77.5946");
+  });
+
+  it("maps a locationMessage with no coordinates to LOCATION with a null body", () => {
+    const msg = fakeMessage({ message: { locationMessage: {} } });
+    const event = normalizeBaileysMessage("channel-1", msg);
+    expect(event?.type).toBe("LOCATION");
+    expect(event?.body).toBeNull();
+  });
+});
+
+describe("baileysMediaTypeFromMime", () => {
+  it("maps common MIME prefixes to Baileys' MediaType strings", () => {
+    expect(baileysMediaTypeFromMime("image/jpeg")).toBe("image");
+    expect(baileysMediaTypeFromMime("image/webp")).toBe("image"); // stickers too — see the function's own doc comment
+    expect(baileysMediaTypeFromMime("video/mp4")).toBe("video");
+    expect(baileysMediaTypeFromMime("audio/ogg")).toBe("audio");
+  });
+
+  it("falls back to 'document' for anything else", () => {
+    expect(baileysMediaTypeFromMime("application/pdf")).toBe("document");
+    expect(baileysMediaTypeFromMime("application/octet-stream")).toBe("document");
   });
 });
 

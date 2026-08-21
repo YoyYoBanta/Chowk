@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatDurationShort } from "@/lib/format/duration";
+import { ALL_SUPPORTED_MIME_TYPES, mediaKindForMime, messageTypeForMediaKind } from "@/services/media/limits";
 import type { MessageDTO } from "../../_lib/types";
+
+/** Best-effort optimistic type guess for a picked file — the server is the
+ * real authority (src/services/media/limits.ts's validateOutboundMedia, in
+ * src/services/messages/send-message.ts) and will reject an unsupported
+ * file with a clear error even if this guesses wrong. */
+function optimisticMessageType(mimeType: string): MessageDTO["type"] {
+  const kind = mediaKindForMime(mimeType);
+  return kind ? messageTypeForMediaKind(kind) : "DOCUMENT";
+}
 
 /**
  * Text composer (context.md §10.4) — the milestone's most important
@@ -57,6 +67,7 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSend = async (): Promise<void> => {
     const body = text.trim();
@@ -82,6 +93,7 @@ export function Composer({
       errorMessage: null,
       metaTimestamp: nowIso,
       createdAt: nowIso,
+      media: null,
     });
 
     try {
@@ -95,6 +107,74 @@ export function Composer({
       if (res.ok) {
         const data = (await res.json()) as { message: MessageDTO };
         onServerAck(tempId, data.message);
+      } else {
+        const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+        onFailed(tempId, data?.error ?? "please try again.");
+      }
+    } catch {
+      onFailed(tempId, "check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
+   * M6: file attachment (context.md §10.4's attachment icon; implementation
+   * -plan.md M6's "Composer attachment picker wired to
+   * upload-outbound.ts"). Same optimistic-add / server-ack / failed shape
+   * as handleSend above, sent as `multipart/form-data` instead of JSON
+   * (src/app/api/conversations/[id]/messages/route.ts dispatches on
+   * Content-Type). The optimistic row gets an instant local preview via
+   * `URL.createObjectURL` so the agent sees the actual image/file right
+   * away rather than a bare placeholder — `onServerAck` replaces it
+   * wholesale with the server's real row (whose `media.url` is the
+   * authenticated `/api/media/:id` route) once accepted.
+   */
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file || sending || !isWindowOpen) return;
+
+    setSending(true);
+
+    const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const nowIso = new Date().toISOString();
+    const previewUrl = URL.createObjectURL(file);
+    onOptimisticAdd({
+      id: tempId,
+      conversationId,
+      provider: "",
+      providerMessageId: null,
+      direction: "OUTBOUND",
+      type: optimisticMessageType(file.type),
+      body: null,
+      mediaId: null,
+      templateName: null,
+      status: "PENDING",
+      errorCode: null,
+      errorMessage: null,
+      metaTimestamp: nowIso,
+      createdAt: nowIso,
+      media: { id: tempId, mimeType: file.type, fileName: file.name, sizeBytes: file.size, url: previewUrl },
+    });
+
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: "POST",
+        credentials: "same-origin",
+        body: form,
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as { message: MessageDTO };
+        onServerAck(tempId, data.message);
+        // The real row (server-rendered, /api/media/:id-backed url) has
+        // replaced this optimistic one now — safe to release the local
+        // blob URL. Left alone on failure/error so the still-visible
+        // FAILED row keeps its preview image instead of breaking.
+        URL.revokeObjectURL(previewUrl);
       } else {
         const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
         onFailed(tempId, data?.error ?? "please try again.");
@@ -143,6 +223,22 @@ export function Composer({
             font: "inherit",
           }}
         />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ALL_SUPPORTED_MIME_TYPES.join(",")}
+          style={{ display: "none" }}
+          onChange={(e) => void handleFileChange(e)}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={sending}
+          title="Attach a file"
+          aria-label="Attach a file"
+        >
+          📎
+        </button>
         <button type="button" onClick={() => void handleSend()} disabled={sending || !text.trim()}>
           {sending ? "Sending..." : "Send"}
         </button>

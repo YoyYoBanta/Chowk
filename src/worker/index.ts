@@ -16,19 +16,22 @@
  * vitest.integration.config.ts.
  *
  * M2 scope: only the `ingest-inbound` consumer is wired up for real here.
- * M4 adds `send-message` and `status-update` consumers alongside it.
+ * M4 adds `send-message` and `status-update` consumers alongside it; M6
+ * adds `download-media`.
  *
- * Deliberately NOT done in M2 (still true at M4): auto-connecting every
- * ACTIVE channel's Baileys socket on boot. `src/providers/baileys/adapter.ts`'s
- * `connect()` is code-complete, but there is no dedicated WhatsApp test
- * number available yet (see TODO-VERIFY.md's M2 section) — having the
- * worker eagerly call `connect()` for a channel with no real session
- * behind it on every boot would just spin on reconnect attempts against
- * nothing. Wiring that boot-time loop back in is a one-line addition once
- * a real channel exists: list ACTIVE channels (across all orgs — the
- * worker is one process serving the whole platform, not scoped to a
- * single tenant) and call `getWhatsAppProvider().connect(channel)` for
- * each.
+ * Boot-time channel connect (added post-M6, once a real dedicated test
+ * number entered the picture): every ACTIVE channel, across every
+ * organization (the worker is one process serving the whole platform, not
+ * scoped to a single tenant — architecture.md §3), gets `connect()`ed on
+ * startup — see `connectActiveChannels()` below, exactly the one-line-ish
+ * addition this comment used to say was deferred. A channel with no paired
+ * session yet prints a scannable QR code to this process's own stdout (see
+ * `src/providers/baileys/adapter.ts`'s `handleConnectionUpdate` — there is
+ * no admin UI for this yet, that's M9 territory); a channel with a
+ * previously-paired session (persisted via `session-store.ts`) resumes
+ * silently, no QR needed. Use `npm run activate-channel` (`scripts/
+ * activate-channel.ts`) to flip a seeded DISCONNECTED channel to ACTIVE
+ * before starting the worker.
  */
 import "dotenv/config";
 import { env } from "@/config/env";
@@ -39,6 +42,7 @@ import {
   type IngestInboundJobData,
   type SendMessageJobData,
   type StatusUpdateJobData,
+  type DownloadMediaJobData,
 } from "@/queue/queues";
 import { processIngestInboundJob } from "@/worker/consumers/ingest-inbound.consumer";
 import {
@@ -46,6 +50,10 @@ import {
   processSendMessageJob,
 } from "@/worker/consumers/send-message.consumer";
 import { processStatusUpdateJob } from "@/worker/consumers/status-update.consumer";
+import { processDownloadMediaJob } from "@/worker/consumers/download-media.consumer";
+import { listOrganizations } from "@/data/organizations";
+import { listChannelsInOrg } from "@/data/channels";
+import { getWhatsAppProvider } from "@/providers/factory";
 
 function startIngestInboundWorker(): Worker<IngestInboundJobData> {
   const worker = new Worker<IngestInboundJobData>(
@@ -94,6 +102,33 @@ function startSendMessageWorker(): Worker<SendMessageJobData> {
   return worker;
 }
 
+function startDownloadMediaWorker(): Worker<DownloadMediaJobData> {
+  const worker = new Worker<DownloadMediaJobData>(
+    QUEUE_NAMES.downloadMedia,
+    async (job: Job<DownloadMediaJobData>) => {
+      await processDownloadMediaJob(job.data);
+    },
+    { connection: redisConnection },
+  );
+
+  worker.on("completed", (job) => {
+    console.log(`[worker] download-media job ${job.id} completed`);
+  });
+  worker.on("failed", (job, err) => {
+    // No special DB write on exhaustion, unlike send-message's
+    // markSendMessageJobExhausted — there is no "media download
+    // permanently failed" field on Message in context.md's schema, and
+    // inventing one is out of this milestone's scope. Once every retry
+    // (src/queue/queues.ts's downloadMediaQueue attempts) is exhausted,
+    // this log line is the record of it — the message row simply keeps
+    // rendering as its type placeholder with no media attached, same as
+    // it does while a download is still in flight.
+    console.error(`[worker] download-media job ${job?.id} failed:`, err);
+  });
+
+  return worker;
+}
+
 function startStatusUpdateWorker(): Worker<StatusUpdateJobData> {
   const worker = new Worker<StatusUpdateJobData>(
     QUEUE_NAMES.statusUpdate,
@@ -113,19 +148,56 @@ function startStatusUpdateWorker(): Worker<StatusUpdateJobData> {
   return worker;
 }
 
+/**
+ * Connects every ACTIVE channel across every organization (data/organizations.ts's
+ * `listOrganizations` — already documented there as "for future admin/ops
+ * tooling", exactly this use). A channel that's DISCONNECTED or SUSPENDED
+ * is left alone, same as always — this only ever touches channels an admin
+ * explicitly marked ACTIVE (via `npm run activate-channel` today; a real
+ * admin UI later, M9). Returns the channel ids `connect()` was called for,
+ * so `main()` can `disconnect()` the same set on shutdown.
+ */
+async function connectActiveChannels(): Promise<string[]> {
+  const provider = getWhatsAppProvider();
+  const connectedChannelIds: string[] = [];
+
+  const orgs = await listOrganizations();
+  for (const org of orgs) {
+    const channels = await listChannelsInOrg(org.id);
+    for (const channel of channels) {
+      if (channel.status !== "ACTIVE") continue;
+      try {
+        await provider.connect(channel);
+        connectedChannelIds.push(channel.id);
+      } catch (error) {
+        console.error(`[worker] failed to connect channel ${channel.id}:`, error);
+      }
+    }
+  }
+
+  console.log(`[worker] connect() called for ${connectedChannelIds.length} ACTIVE channel(s)`);
+  return connectedChannelIds;
+}
+
 async function main(): Promise<void> {
   console.log(`[worker] starting (WHATSAPP_PROVIDER=${env.WHATSAPP_PROVIDER})`);
 
   const ingestInboundWorker = startIngestInboundWorker();
   const sendMessageWorker = startSendMessageWorker();
   const statusUpdateWorker = startStatusUpdateWorker();
+  const downloadMediaWorker = startDownloadMediaWorker();
+
+  const connectedChannelIds = await connectActiveChannels();
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[worker] received ${signal}, shutting down`);
+    const provider = getWhatsAppProvider();
     await Promise.all([
       ingestInboundWorker.close(),
       sendMessageWorker.close(),
       statusUpdateWorker.close(),
+      downloadMediaWorker.close(),
+      ...connectedChannelIds.map((id) => provider.disconnect(id)),
     ]);
     process.exit(0);
   };
@@ -134,7 +206,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   console.log(
-    "[worker] ready — ingest-inbound, send-message, status-update consumers listening",
+    "[worker] ready — ingest-inbound, send-message, status-update, download-media consumers listening",
   );
 }
 

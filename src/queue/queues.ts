@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import { redisConnection } from "./connection";
-import type { NormalizedInboundEvent, NormalizedStatusEvent } from "@/providers/types";
+import type { MediaReference, NormalizedInboundEvent, NormalizedStatusEvent } from "@/providers/types";
 
 /** Queue name constants — the single source of truth both the producer
  * (provider adapters) and consumer (src/worker/consumers/) sides reference. */
@@ -8,6 +8,7 @@ export const QUEUE_NAMES = {
   ingestInbound: "ingest-inbound",
   sendMessage: "send-message",
   statusUpdate: "status-update",
+  downloadMedia: "download-media",
 } as const;
 
 /**
@@ -132,4 +133,41 @@ export function getStatusUpdateQueue(): Queue<StatusUpdateJobData> {
     });
   }
   return statusUpdateQueue;
+}
+
+/**
+ * M6 addition: `download-media` (architecture.md §8/§13 — "enqueued in the
+ * SAME TICK as the message insert... Time-sensitive, retried aggressively
+ * before URL expiry (Phase B)"). Payload carries the full `MediaReference`
+ * rather than just an id, unlike send-message/status-update's id-only
+ * payloads — there is no durable row to re-read it from yet (that's the
+ * whole point of this job: to CREATE that row), so the reference itself
+ * has to travel with the job, exactly the way `IngestInboundJobData`
+ * already carries a full `NormalizedInboundEvent` for the identical reason.
+ */
+export interface DownloadMediaJobData {
+  organizationId: string;
+  provider: "baileys" | "cloud-api";
+  channelId: string;
+  messageId: string;
+  mediaRef: MediaReference;
+}
+
+let downloadMediaQueue: Queue<DownloadMediaJobData> | undefined;
+
+export function getDownloadMediaQueue(): Queue<DownloadMediaJobData> {
+  if (!downloadMediaQueue) {
+    downloadMediaQueue = new Queue<DownloadMediaJobData>(QUEUE_NAMES.downloadMedia, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        // Tighter/faster than send-message's or status-update's backoff —
+        // Meta's media download URLs are short-lived (context.md §4.4), so
+        // a stuck download job should exhaust its retries quickly rather
+        // than slowly, while there's still a chance the URL hasn't expired.
+        attempts: 8,
+        backoff: { type: "exponential", delay: 1_000 },
+      },
+    });
+  }
+  return downloadMediaQueue;
 }

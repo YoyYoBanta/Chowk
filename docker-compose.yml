@@ -1,5 +1,5 @@
 # Local dev infra: PostgreSQL + Redis (BullMQ, wired from M2 onward) +
-# MinIO (S3-compatible object storage, wired from M2 onward). See
+# MinIO (S3-compatible object storage, wired from M6 onward). See
 # architecture.md for the stack; see .env.example for the corresponding
 # env vars — the values below are chosen to match it exactly so copying
 # .env.example to .env "just works" against this compose file.
@@ -13,9 +13,14 @@
 #   npx prisma migrate deploy  # apply prisma/migrations/ to postgres
 #   npm run seed                # seed the M1 demo orgs/users
 #
-# Not exercised by CI or by any test in this repo yet (Redis/MinIO have no
-# callers until M2) — this file exists so the local-dev loop is a single
-# command once Docker is available, here or on a real dev machine.
+# Not exercised by CI or by any test in this repo yet — every prior
+# milestone's verification ran against standalone Postgres/Redis binaries
+# instead, in a separate cloud agent environment with no Docker reachable
+# (see PROGRESS.md/TODO-VERIFY.md). MinIO specifically has never been
+# started at all (M6's own object-storage tests mock
+# src/lib/storage/object-store.ts instead — see TODO-VERIFY.md's M6
+# section). This file exists so the local-dev loop is a single command
+# once Docker is available, here or on a real dev machine.
 
 services:
   postgres:
@@ -48,6 +53,13 @@ services:
       timeout: 5s
       retries: 10
 
+  # M6: media storage (src/lib/storage/object-store.ts). MinIO does NOT
+  # auto-create buckets — after `docker compose up -d`, create the bucket
+  # named by OBJECT_STORAGE_BUCKET (.env.example: "chowk") once, e.g.:
+  #   docker compose exec minio mc alias set local http://localhost:9000 replace-with-access-key replace-with-secret-key
+  #   docker compose exec minio mc mb local/chowk
+  # (or via the web console at http://localhost:9001). Deliberately not
+  # automated in application code — see TODO-VERIFY.md's M6 section.
   minio:
     image: minio/minio:latest
     restart: unless-stopped

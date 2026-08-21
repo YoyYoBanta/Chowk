@@ -37,6 +37,17 @@ export interface ConversationsListResponse {
   nextCursor: string | null;
 }
 
+/** M6: the small, authenticated-URL-bearing view of a stored `Media` row —
+ * see src/lib/media/summary.ts's mediaToSummary (the single shared server
+ * implementation this mirrors). */
+export interface MediaSummaryDTO {
+  id: string;
+  mimeType: string;
+  fileName: string | null;
+  sizeBytes: number | null;
+  url: string;
+}
+
 export interface MessageDTO {
   id: string;
   conversationId: string;
@@ -52,6 +63,10 @@ export interface MessageDTO {
   errorMessage: string | null;
   metaTimestamp: string;
   createdAt: string;
+  /** M6: null for a non-media message, or for a media message whose file
+   * hasn't finished downloading yet (see message.updated below — a live
+   * event fires once it has). */
+  media: MediaSummaryDTO | null;
 }
 
 export interface MessagesPageResponse {
@@ -107,6 +122,19 @@ export interface MessageStatusChangedRealtimeEvent {
   message: MessageDTO;
 }
 
+/** M6 addition: fires when a message's media finishes downloading and
+ * `mediaId` gets linked (src/services/media/download-and-store.ts) — see
+ * src/services/realtime/publish.ts's publishMessageUpdated for why this
+ * isn't folded into message.status_changed (status is meaningless for an
+ * INBOUND message). Handled identically to status_changed client-side. */
+export interface MessageUpdatedRealtimeEvent {
+  type: "message.updated";
+  organizationId: string;
+  conversationId: string;
+  message: MessageDTO;
+}
+
 export type ConversationRealtimeEvent =
   | MessageCreatedRealtimeEvent
-  | MessageStatusChangedRealtimeEvent;
+  | MessageStatusChangedRealtimeEvent
+  | MessageUpdatedRealtimeEvent;

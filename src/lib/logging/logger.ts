@@ -55,6 +55,14 @@ export interface LogFields {
   errorMessage?: string;
   reason?: string;
   count?: number;
+  // M6 additions — metadata about a media attachment (id/MIME type/byte
+  // size, and whether an inbound event carried one at all). Still no
+  // `body`/`content`/`text`/`caption`/`media` field — these are metadata
+  // about a file, never its content.
+  mediaId?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  hasMedia?: boolean;
 }
 
 interface LogLine extends LogFields {

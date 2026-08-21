@@ -5,6 +5,15 @@ import {
   type WAMessage,
   type WAMessageUpdate,
 } from "@whiskeysockets/baileys";
+// `Long` (protobufjs' 64-bit integer type, used for `fileLength` below) is
+// referenced bare in Baileys' own generics.d.ts (`toNumber`'s signature)
+// without being imported there — invisible to us because tsconfig.json's
+// `skipLibCheck` skips type-checking node_modules `.d.ts` files, but the
+// identical bare reference in OUR OWN source (not a `.d.ts`) IS checked, so
+// it needs a real import. `long` is a real transitive dependency of
+// @whiskeysockets/baileys (via protobufjs) and is present in node_modules;
+// its default export is the `Long` class, imported here as a type only.
+import type Long from "long";
 import type {
   InteractivePayload,
   MediaReference,
@@ -48,6 +57,13 @@ interface BaileysMediaContent {
   fileName?: string | null;
   directPath?: string | null;
   url?: string | null;
+  // M6: needed to actually decrypt the download (see MediaReference's own
+  // doc comment, providers/types.ts) — Baileys media is E2E-encrypted, and
+  // `mediaKey` is the per-message key. Confirmed as a real field on every
+  // media message proto (imageMessage/videoMessage/audioMessage/
+  // documentMessage/stickerMessage all carry it) against Baileys' own
+  // WAProto definitions — see TODO-VERIFY.md's M6 section.
+  mediaKey?: Uint8Array | null;
 }
 
 export function mediaRefFrom(
@@ -61,6 +77,9 @@ export function mediaRefFrom(
     sha256: content.fileSha256 ? Buffer.from(content.fileSha256).toString("base64") : undefined,
     fileLength: content.fileLength != null ? toNumber(content.fileLength) : undefined,
     filename: content.fileName ?? null,
+    directPath: content.directPath ?? undefined,
+    url: content.url ?? undefined,
+    mediaKey: content.mediaKey ? Buffer.from(content.mediaKey).toString("base64") : undefined,
   };
 }
 
@@ -120,9 +139,21 @@ export function normalizeBaileysMessage(
       type = "STICKER";
       media = mediaRefFrom(content?.stickerMessage, "image/webp");
       break;
-    case "locationMessage":
+    case "locationMessage": {
       type = "LOCATION";
+      // M6: no dedicated lat/lng columns exist on Message (context.md §7.4's
+      // schema has none), so the coordinates are captured into `body` as a
+      // plain "lat,lng" string — src/lib/messages/render.ts's
+      // parseLocationBody parses it back out for rendering. Field names
+      // (degreesLatitude/degreesLongitude) confirmed against Baileys' own
+      // WAProto LocationMessage definition, not guessed — see
+      // TODO-VERIFY.md's M6 section.
+      const loc = content?.locationMessage;
+      if (loc?.degreesLatitude != null && loc?.degreesLongitude != null) {
+        body = `${loc.degreesLatitude},${loc.degreesLongitude}`;
+      }
       break;
+    }
     case "contactMessage":
     case "contactsArrayMessage":
       type = "CONTACTS";
@@ -166,6 +197,26 @@ export function normalizeBaileysMessage(
     interactive,
     raw: msg,
   };
+}
+
+/**
+ * Maps a MIME type to the Baileys `MediaType` string `downloadContentFromMessage()`
+ * needs (M6 — src/providers/baileys/adapter.ts's downloadMedia()). Baileys'
+ * own `MediaType` is `keyof typeof MEDIA_HKDF_KEY_MAPPING`
+ * (`src/Defaults/index.ts`), which includes `'image' | 'video' | 'audio' |
+ * 'document' | 'sticker' | ...` — confirmed directly against that mapping,
+ * not guessed (TODO-VERIFY.md's M6 section). `image` and `sticker` share
+ * the same HKDF label ("Image") in that mapping, so treating a
+ * `image/webp` sticker as `'image'` here decrypts identically; there is no
+ * need to thread a separate "is this a sticker" flag through
+ * `MediaReference` just to pick between two type strings that key-derive
+ * the same way.
+ */
+export function baileysMediaTypeFromMime(mimeType: string): "image" | "video" | "audio" | "document" {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  return "document";
 }
 
 /**

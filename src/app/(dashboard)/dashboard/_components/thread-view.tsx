@@ -209,11 +209,12 @@ export function ThreadView({
         return;
       }
 
-      if (parsed.type === "message.status_changed") {
-        // Update the existing row in place (tick indicator progressing);
-        // if this client has never seen this id yet (e.g. a different
-        // agent's browser tab sent it), treat it like a brand-new message
-        // instead — the event always carries the full row either way.
+      if (parsed.type === "message.status_changed" || parsed.type === "message.updated") {
+        // Update the existing row in place (tick indicator progressing, or
+        // — M6 — media finishing its download); if this client has never
+        // seen this id yet (e.g. a different agent's browser tab sent it),
+        // treat it like a brand-new message instead — the event always
+        // carries the full row either way.
         setMessages((prev) => {
           const index = prev.findIndex((m) => m.id === parsed.message.id);
           if (index === -1) return [...prev, parsed.message];

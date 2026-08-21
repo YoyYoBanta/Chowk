@@ -1,7 +1,11 @@
+import type { Message } from "@prisma/client";
 import type { SendMessageJobData } from "@/queue/queues";
 import { getMessageById, markMessageFailed, markMessageSent } from "@/data/messages";
-import { getConversationWithContact } from "@/data/conversations";
+import { getConversationWithContact, type ConversationWithContact } from "@/data/conversations";
+import { getMediaById } from "@/data/media";
 import { getWhatsAppProvider } from "@/providers/factory";
+import { uploadStoredMediaToProvider } from "@/services/media/upload-outbound";
+import type { SendResult } from "@/providers/types";
 import { publishMessageStatusChanged } from "@/services/realtime/publish";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
@@ -9,7 +13,9 @@ import { logger, newCorrelationId } from "@/lib/logging/logger";
  * The transport-agnostic outbound-send consumer (architecture.md §7). Loads
  * the `Message` by id (never trusts a payload beyond `{ organizationId,
  * messageId }` — architecture.md §13, so a retried job always re-reads
- * current DB state), calls `provider.sendText()`, and applies the result:
+ * current DB state), calls `provider.sendText()` or, for a media message
+ * (M6), `provider.uploadMedia()` + `provider.sendMedia()` (see
+ * sendMediaViaProvider below), and applies the result:
  *
  *  - `ok: true`                    -> providerMessageId captured, SENT
  *  - `ok: false, retryable: true`  -> THROW, handing control back to
@@ -84,13 +90,36 @@ export async function processSendMessageJob(data: SendMessageJobData): Promise<v
     messageId,
     conversationId: message.conversationId,
     channelId: conversation.channel.id,
+    // Reuses the existing `messageType` field (LogFields) — same name the
+    // ingest-inbound consumer's own "message ingested" log line already
+    // uses for the identical concept — rather than adding a near-duplicate
+    // `type` field.
+    messageType: message.type,
   });
 
-  const result = await getWhatsAppProvider().sendText({
-    channelId: conversation.channel.id,
-    to: conversation.contact.waId,
-    body: message.body ?? "",
-  });
+  let result: SendResult;
+  if (message.type === "TEXT") {
+    result = await getWhatsAppProvider().sendText({
+      channelId: conversation.channel.id,
+      to: conversation.contact.waId,
+      body: message.body ?? "",
+    });
+  } else {
+    const mediaResult = await sendMediaViaProvider(organizationId, conversation, message);
+    if (!mediaResult.ok) {
+      await markMessageFailed(organizationId, messageId, mediaResult.code, mediaResult.message);
+      logger.error("send-message job: terminal media send failure — marked FAILED", {
+        organizationId,
+        correlationId,
+        messageId,
+        errorCode: mediaResult.code,
+        errorMessage: mediaResult.message,
+      });
+      await publishUpdatedStatus(organizationId, message.conversationId, messageId, correlationId);
+      return;
+    }
+    result = mediaResult.result;
+  }
 
   if (result.ok) {
     await markMessageSent(organizationId, messageId, result.providerMessageId);
@@ -170,4 +199,58 @@ export async function markSendMessageJobExhausted(
   });
 
   await publishUpdatedStatus(organizationId, message.conversationId, messageId, newCorrelationId());
+}
+
+type MediaSendOutcome = { ok: true; result: SendResult } | { ok: false; code: string; message: string };
+
+/**
+ * M6: the media counterpart of the plain `provider.sendText()` call above.
+ * Loads the `Media` row the outbound send already created (src/services/
+ * messages/send-message.ts's sendMediaMessage — `message.mediaId` is set
+ * from the moment the PENDING row was created, unlike an inbound media
+ * message), reads our own stored bytes back out, and does the two-step
+ * architecture.md §8 outbound sequence: `uploadMedia()` then `sendMedia()`.
+ *
+ * The `{ ok: false, code, message }` branch here is for conditions a retry
+ * can never fix (no mediaId on the row at all, or the Media row it points
+ * to has vanished) — genuinely exceptional, not a normal provider failure
+ * mode, so these are reported as an immediate terminal outcome rather than
+ * thrown. An actual failure from `uploadStoredMediaToProvider()` or
+ * `provider.sendMedia()` itself (network error, no live session, etc.) is
+ * NOT caught here — it propagates as a thrown exception exactly like any
+ * other unexpected error in processSendMessageJob, letting BullMQ's own
+ * retry/backoff handle it the same way a `getConversationWithContact()`
+ * throw already would.
+ */
+async function sendMediaViaProvider(
+  organizationId: string,
+  conversation: ConversationWithContact,
+  message: Message,
+): Promise<MediaSendOutcome> {
+  if (!message.mediaId) {
+    return {
+      ok: false,
+      code: "MISSING_MEDIA",
+      message: "This message has no attached file to send.",
+    };
+  }
+
+  const media = await getMediaById(organizationId, message.mediaId);
+  if (!media) {
+    return {
+      ok: false,
+      code: "MEDIA_NOT_FOUND",
+      message: "The attached file could not be found.",
+    };
+  }
+
+  const mediaRef = await uploadStoredMediaToProvider(conversation.channel.id, media);
+  const result = await getWhatsAppProvider().sendMedia({
+    channelId: conversation.channel.id,
+    to: conversation.contact.waId,
+    media: mediaRef,
+    caption: message.body ?? undefined,
+  });
+
+  return { ok: true, result };
 }

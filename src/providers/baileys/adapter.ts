@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
 import type { Channel } from "@prisma/client";
+import qrcodeTerminal from "qrcode-terminal";
 import makeWASocket, {
   DisconnectReason,
+  downloadContentFromMessage,
+  type AnyMessageContent,
   type ConnectionState as BaileysConnectionState,
   type MessageUpsertType,
   type WAMessage,
@@ -12,7 +16,12 @@ import { findMessageByProviderMessageId } from "@/data/messages";
 import { getConversationWithContact } from "@/data/conversations";
 import { getIngestInboundQueue, getStatusUpdateQueue, QUEUE_NAMES } from "@/queue/queues";
 import { createDbAuthState } from "./session-store";
-import { digitsToJid, normalizeBaileysMessage, normalizeBaileysStatusUpdate } from "./normalize";
+import {
+  baileysMediaTypeFromMime,
+  digitsToJid,
+  normalizeBaileysMessage,
+  normalizeBaileysStatusUpdate,
+} from "./normalize";
 import { checkWindowOpenForSend } from "./simulate-window";
 import type {
   ConnectionState,
@@ -52,18 +61,22 @@ import type {
  *    onto the real status-update BullMQ queue via the same
  *    `onStatusUpdate(handler)` registration point the interface already
  *    defined at M2.
- *  - sendText()/sendMedia() (M5, this milestone) additionally simulate
- *    Meta's 24-hour service window independently of the service layer
- *    (context.md §8.0.4 — see ./simulate-window.ts's own doc comment for
- *    why this is intentional defense-in-depth, not a duplicate check to
- *    remove): both return `{ ok: false, retryable: false, code:
- *    'WINDOW_CLOSED' }` when called for a conversation whose window is
- *    closed, before ever touching the socket.
- *  - sendMedia/sendTemplate/downloadMedia/uploadMedia/listTemplates/
- *    createTemplate remain otherwise STUBS — explicitly out of scope until
- *    M6 (media) / M7 (templates); sendMedia's window-check guard is the one
- *    piece of M6/M7's simulation work built this milestone, so the pattern
- *    is consistent for M6 to build the rest of its body on.
+ *  - sendText()/sendMedia() (M5) additionally simulate Meta's 24-hour
+ *    service window independently of the service layer (context.md
+ *    §8.0.4 — see ./simulate-window.ts's own doc comment for why this is
+ *    intentional defense-in-depth, not a duplicate check to remove): both
+ *    return `{ ok: false, retryable: false, code: 'WINDOW_CLOSED' }` when
+ *    called for a conversation whose window is closed, before ever
+ *    touching the socket.
+ *  - sendMedia()/downloadMedia()/uploadMedia() (M6, this milestone) are
+ *    REAL: sendMedia() sends real image/video/audio/document content
+ *    (built by buildBaileysMediaContent below); downloadMedia() decrypts
+ *    real E2E-encrypted media bytes via Baileys' own
+ *    downloadContentFromMessage(); uploadMedia() hands its buffer to
+ *    sendMedia() via a short-lived in-memory cache (see its own doc
+ *    comment for why that's deliberate, not a shortcut).
+ *  - sendTemplate/listTemplates/createTemplate remain STUBS — explicitly
+ *    out of scope until M7.
  *
  * connect() (and, as of M4, sendText()/markAsRead()/the messages.update
  * wiring) is code-complete but UNVERIFIED against a real WhatsApp session
@@ -86,6 +99,10 @@ export class BaileysProvider implements WhatsAppProvider {
   private readonly reconnectAttempts = new Map<string, number>();
   private readonly inboundHandlers: Array<(e: NormalizedInboundEvent) => Promise<void>> = [];
   private readonly statusHandlers: Array<(e: NormalizedStatusEvent) => Promise<void>> = [];
+  // M6: uploadMedia()'s in-memory hand-off to sendMedia() — see
+  // uploadMedia()'s own doc comment below for why this is deliberately
+  // NOT persisted anywhere.
+  private readonly outboundMediaCache = new Map<string, { buffer: Buffer; mimeType: string }>();
 
   async connect(channel: Channel): Promise<void> {
     this.channels.set(channel.id, channel);
@@ -157,12 +174,23 @@ export class BaileysProvider implements WhatsAppProvider {
 
     if (qr) {
       this.connectionStates.set(channel.id, { status: "qr_pending", qr });
+      // Pairing affordance, not a product feature (context.md §8.1b: "keep
+      // this adapter deliberately thin, it is scaffolding") — there is no
+      // admin UI for connecting a channel yet (that's M9 territory), so
+      // printing the QR straight to the Worker process's own stdout is the
+      // only way a human can currently pair a real WhatsApp session. Fires
+      // every time Baileys rotates the QR (it expires and re-issues one
+      // periodically until scanned), same as every other Baileys
+      // getting-started example.
+      console.log(`\n[baileys] channel ${channel.id} — scan this QR code with WhatsApp (Linked Devices):\n`);
+      qrcodeTerminal.generate(qr, { small: true });
       return;
     }
 
     if (connection === "open") {
       this.reconnectAttempts.set(channel.id, 0);
       this.connectionStates.set(channel.id, { status: "connected" });
+      console.log(`[baileys] channel ${channel.id} connected — session paired and live.`);
       return;
     }
 
@@ -330,22 +358,67 @@ export class BaileysProvider implements WhatsAppProvider {
   }
 
   /**
-   * Body remains a stub (M6) — media send itself is out of scope this
-   * milestone. The window-check guard is added now (M5) so the pattern
-   * (check window first, same as sendText) is already in place for M6 to
-   * build the real body on top of, rather than something M6 has to
-   * remember to retrofit.
+   * Real media send (M6). Window-check guard (M5) unchanged — runs first,
+   * same as sendText(). `p.media.id` must be a key this adapter's own
+   * uploadMedia() minted moments earlier in the SAME send-message job
+   * (src/worker/consumers/send-message.consumer.ts calls uploadMedia()
+   * then sendMedia() back to back) — see uploadMedia()'s doc comment for
+   * why this in-memory hand-off is deliberately not durable across a
+   * Worker restart, and why that's fine given every retry re-uploads
+   * fresh (src/services/media/upload-outbound.ts's
+   * uploadStoredMediaToProvider doc comment).
+   *
+   * Content shape per media kind (`AnyRegularMessageContent`'s image/
+   * video/audio/document members) confirmed directly against Baileys' own
+   * `src/Types/Message.ts` — not guessed — see TODO-VERIFY.md's M6
+   * section.
    */
   async sendMedia(p: SendMediaParams): Promise<SendResult> {
     const windowRejection = await this.checkWindow(p.channelId, p.to);
     if (windowRejection) return windowRejection;
 
-    return {
-      ok: false,
-      retryable: false,
-      code: "NOT_IMPLEMENTED",
-      message: "baileys: sendMedia() lands in M4/M6",
-    };
+    const sock = this.sockets.get(p.channelId);
+    if (!sock) {
+      return {
+        ok: false,
+        retryable: true,
+        code: "NO_ACTIVE_SESSION",
+        message: "No active WhatsApp session for this channel — it may be reconnecting.",
+      };
+    }
+
+    const cached = this.outboundMediaCache.get(p.media.id);
+    if (!cached) {
+      return {
+        ok: false,
+        retryable: false,
+        code: "MEDIA_NOT_FOUND",
+        message: "This media reference is no longer available for sending.",
+      };
+    }
+
+    try {
+      const content = buildBaileysMediaContent(cached.mimeType, cached.buffer, p.caption, p.media.filename);
+      const sent = await sock.sendMessage(digitsToJid(p.to), content);
+      const providerMessageId = sent?.key?.id;
+      if (!providerMessageId) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "NO_MESSAGE_ID_RETURNED",
+          message: "Baileys did not return a message id for this send.",
+        };
+      }
+      this.outboundMediaCache.delete(p.media.id);
+      return { ok: true, providerMessageId };
+    } catch (error) {
+      return {
+        ok: false,
+        retryable: true,
+        code: "SEND_THREW",
+        message: error instanceof Error ? error.message : "Unknown error sending media via Baileys.",
+      };
+    }
   }
 
   /** Shared by sendText/sendMedia — see checkWindowOpenForSend's own doc
@@ -414,12 +487,67 @@ export class BaileysProvider implements WhatsAppProvider {
     }
   }
 
-  async downloadMedia(_channelId: string, _ref: MediaReference): Promise<Buffer> {
-    throw new Error("baileys: downloadMedia() lands in M6");
+  /**
+   * Real inbound media download (M6). Baileys media is end-to-end
+   * encrypted — `ref.mediaKey` (base64, captured by
+   * src/providers/baileys/normalize.ts's mediaRefFrom at ingest time) is
+   * required to decrypt it; `ref.directPath`/`ref.url` locate the
+   * encrypted bytes on WhatsApp's CDN. `downloadContentFromMessage()` is
+   * the real, public Baileys export for this (confirmed against the
+   * installed package's own source, not guessed — see TODO-VERIFY.md's M6
+   * section for exactly how); it returns a Node stream of the DECRYPTED
+   * plaintext, which this method buffers fully — Tier 1's media sizes
+   * (context.md §8.3 / src/services/media/limits.ts: 100MB ceiling) are
+   * small enough that buffering the whole file is simpler and safe here.
+   */
+  async downloadMedia(_channelId: string, ref: MediaReference): Promise<Buffer> {
+    if (!ref.mediaKey) {
+      throw new Error(
+        "baileys: downloadMedia() called with a reference that has no mediaKey — cannot decrypt",
+      );
+    }
+
+    const mediaType = baileysMediaTypeFromMime(ref.mimeType);
+    const stream = await downloadContentFromMessage(
+      {
+        mediaKey: Buffer.from(ref.mediaKey, "base64"),
+        directPath: ref.directPath ?? null,
+        url: ref.url ?? null,
+      },
+      mediaType,
+    );
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
   }
 
-  async uploadMedia(_channelId: string, _file: Buffer, _mime: string): Promise<MediaReference> {
-    throw new Error("baileys: uploadMedia() lands in M6");
+  /**
+   * Real outbound media "upload" (M6) — but Baileys has no genuine
+   * upload-then-reference-by-id step the way Meta's Cloud API does
+   * (architecture.md §8): `sock.sendMessage()` takes the raw buffer
+   * directly. To honor the shared `WhatsAppProvider` interface (one
+   * `uploadMedia()` call, then a LATER `sendMedia()` call referencing what
+   * it returned — architecture.md §5 rule 3, no `if (provider ===
+   * 'baileys')` branching allowed outside src/providers/), this caches the
+   * buffer in memory keyed by a fresh id and hands that id back as the
+   * `MediaReference`; sendMedia() (above) looks it up and consumes it.
+   *
+   * Deliberately NOT persisted anywhere more durable (a DB row, a second
+   * object-storage write) — src/services/media/upload-outbound.ts's
+   * uploadStoredMediaToProvider doc comment explains why: this adapter's
+   * own in-memory map would silently go stale across a Worker restart if
+   * anything ever tried to reuse an old reference, so the design instead
+   * ensures nothing does — every send attempt (including a BullMQ retry)
+   * calls uploadMedia() fresh, immediately followed by sendMedia() in the
+   * same job execution, never across a gap where a restart could land.
+   */
+  async uploadMedia(_channelId: string, file: Buffer, mime: string): Promise<MediaReference> {
+    const id = randomUUID();
+    this.outboundMediaCache.set(id, { buffer: file, mimeType: mime });
+    return { id, mimeType: mime, fileLength: file.length };
   }
 
   async listTemplates(_channelId: string): Promise<ProviderTemplate[]> {
@@ -437,6 +565,35 @@ export class BaileysProvider implements WhatsAppProvider {
   onStatusUpdate(handler: (e: NormalizedStatusEvent) => Promise<void>): void {
     this.statusHandlers.push(handler);
   }
+}
+
+/**
+ * Builds the `AnyMessageContent` object `sock.sendMessage()` expects for a
+ * given outbound media kind — one variant per Tier 1 outbound media type
+ * (context.md §8.2: image, video, audio, document). Field shapes
+ * (`image`/`video`/`audio`/`document` as the buffer-holding key, `caption`,
+ * `mimetype`, `fileName`) confirmed directly against Baileys'
+ * `AnyRegularMessageContent` union in `src/Types/Message.ts` — not guessed.
+ * Audio deliberately gets no caption (WhatsApp voice/audio messages don't
+ * render one; `AnyRegularMessageContent`'s audio variant has no `caption`
+ * field at all).
+ */
+function buildBaileysMediaContent(
+  mimeType: string,
+  buffer: Buffer,
+  caption: string | undefined,
+  fileName: string | null | undefined,
+): AnyMessageContent {
+  if (mimeType.startsWith("image/")) {
+    return { image: buffer, mimetype: mimeType, caption };
+  }
+  if (mimeType.startsWith("video/")) {
+    return { video: buffer, mimetype: mimeType, caption };
+  }
+  if (mimeType.startsWith("audio/")) {
+    return { audio: buffer, mimetype: mimeType };
+  }
+  return { document: buffer, mimetype: mimeType, caption, fileName: fileName ?? "file" };
 }
 
 export const baileysAdapter: WhatsAppProvider = new BaileysProvider();

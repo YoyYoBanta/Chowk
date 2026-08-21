@@ -27,13 +27,26 @@ export type ConnectionState =
 
 /** A reference to a piece of media, provider-agnostic. In Phase A this
  * wraps a Baileys download key; in Phase B, a Meta media id. Never the raw
- * bytes — those move through downloadMedia/uploadMedia. */
+ * bytes — those move through downloadMedia/uploadMedia.
+ *
+ * `directPath`/`url`/`mediaKey` (M6) are Phase A (Baileys) only: Baileys
+ * media is end-to-end encrypted, so downloading it needs the CDN location
+ * (`directPath`, falling back to `url`) AND the decryption key
+ * (`mediaKey`, base64) — see src/providers/baileys/adapter.ts's
+ * downloadMedia() and TODO-VERIFY.md's M6 section for exactly how these
+ * were confirmed against Baileys' own source. Phase B's Meta media ids need
+ * none of this (Meta handles decryption server-side before handing us
+ * plaintext bytes over an authenticated HTTP GET) — these fields stay
+ * undefined for a Cloud API-sourced reference. */
 export interface MediaReference {
   id: string;
   mimeType: string;
   sha256?: string;
   fileLength?: number;
   filename?: string | null;
+  directPath?: string;
+  url?: string;
+  mediaKey?: string;
 }
 
 /** A button/list reply an agent's contact tapped. */

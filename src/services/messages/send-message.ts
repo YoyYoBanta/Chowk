@@ -5,6 +5,8 @@ import { getSendMessageQueue, QUEUE_NAMES } from "@/queue/queues";
 import { getWhatsAppProvider } from "@/providers/factory";
 import { isWindowOpen } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
+import { storeOutboundMedia } from "@/services/media/upload-outbound";
+import { mediaKindForMime, messageTypeForMediaKind, validateOutboundMedia } from "@/services/media/limits";
 
 /**
  * The outbound-send sequence (architecture.md §7 / context.md §8.2):
@@ -58,7 +60,8 @@ export interface SendTextMessageInput {
 export type SendMessageResult =
   | { ok: true; message: Message }
   | { ok: false; status: 404; error: string }
-  | { ok: false; status: 409; code: "WINDOW_CLOSED"; error: string };
+  | { ok: false; status: 409; code: "WINDOW_CLOSED"; error: string }
+  | { ok: false; status: 400; code: "INVALID_MEDIA"; error: string };
 
 export interface SendTextMessageOpts {
   correlationId?: string;
@@ -133,6 +136,122 @@ export async function sendTextMessage(
     correlationId,
     conversationId,
     messageId: message.id,
+  });
+
+  return { ok: true, message };
+}
+
+/**
+ * M6: the media counterpart to sendTextMessage above. Same sequence — org
+ * check, window check, PENDING-before-anything-else, id-only enqueue — with
+ * one extra step in the middle: validate the file (context.md §8.3, before
+ * any upload) and store OUR OWN copy to object storage FIRST
+ * (src/services/media/upload-outbound.ts's storeOutboundMedia), because
+ * `createPendingOutboundMessage` needs a real `Media.id` to set as
+ * `mediaId` — unlike an inbound media message (whose mediaId starts null
+ * and gets linked later by the async download-and-store pipeline), an
+ * outbound message's mediaId is set at creation time, before the provider
+ * has even been asked to upload/send anything.
+ *
+ * The actual `provider.uploadMedia()` → `provider.sendMedia()` calls happen
+ * later, in the Worker (src/worker/consumers/send-message.consumer.ts) —
+ * same PENDING-row-survives-a-crash guarantee as the text path, and the
+ * same generic send-message queue/consumer handles both (architecture.md
+ * §13: the job payload is just `{ organizationId, messageId }` either way).
+ */
+export interface SendMediaMessageInput {
+  organizationId: string;
+  conversationId: string;
+  userId: string;
+  file: Buffer;
+  mimeType: string;
+  fileName: string | null;
+  caption?: string | null;
+}
+
+export async function sendMediaMessage(
+  input: SendMediaMessageInput,
+  opts: SendTextMessageOpts = {},
+): Promise<SendMessageResult> {
+  const { organizationId, conversationId, userId, file, mimeType, fileName, caption } = input;
+  const correlationId = opts.correlationId ?? newCorrelationId();
+
+  logger.info("send-media-message: start", {
+    organizationId,
+    correlationId,
+    conversationId,
+    userId,
+    mimeType,
+    sizeBytes: file.length,
+  });
+
+  const conversation = await getConversationById(organizationId, conversationId);
+  if (!conversation) {
+    logger.info("send-media-message: conversation not found for this organization", {
+      organizationId,
+      correlationId,
+      conversationId,
+    });
+    return { ok: false, status: 404, error: "Conversation not found" };
+  }
+
+  // Media is a free-form send just like text (context.md §4.1: "Inside the
+  // window: any free-form message may be sent — text, media, interactive"),
+  // so the identical window check applies, in the identical position —
+  // BEFORE storing anything or creating any row.
+  if (!opts.skipWindowCheck && !isWindowOpen(conversation.lastInboundAt)) {
+    logger.info("send-media-message: rejected, 24h service window closed", {
+      organizationId,
+      correlationId,
+      conversationId,
+    });
+    return {
+      ok: false,
+      status: 409,
+      code: "WINDOW_CLOSED",
+      error:
+        "The 24-hour reply window has closed for this conversation. Send an approved template message to reopen it.",
+    };
+  }
+
+  const validation = validateOutboundMedia(mimeType, file.length);
+  if (!validation.ok) {
+    logger.info("send-media-message: rejected, invalid media", {
+      organizationId,
+      correlationId,
+      conversationId,
+      mimeType,
+      sizeBytes: file.length,
+    });
+    return { ok: false, status: 400, code: "INVALID_MEDIA", error: validation.error ?? "Invalid file" };
+  }
+
+  const media = await storeOutboundMedia(organizationId, file, mimeType, fileName);
+
+  // Safe to assert non-null: validateOutboundMedia above already confirmed
+  // mimeType maps to a known kind.
+  const kind = mediaKindForMime(mimeType)!;
+
+  const message = await createPendingOutboundMessage(organizationId, {
+    conversationId,
+    provider: getWhatsAppProvider().name,
+    type: messageTypeForMediaKind(kind),
+    body: caption ?? null,
+    mediaId: media.id,
+    sentByUserId: userId,
+  });
+
+  await getSendMessageQueue().add(QUEUE_NAMES.sendMessage, {
+    organizationId,
+    messageId: message.id,
+  });
+
+  logger.info("send-media-message: PENDING row created, job enqueued", {
+    organizationId,
+    correlationId,
+    conversationId,
+    messageId: message.id,
+    mediaId: media.id,
   });
 
   return { ok: true, message };

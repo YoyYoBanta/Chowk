@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import type { IngestInboundJobData } from "@/queue/queues";
+import { getDownloadMediaQueue, QUEUE_NAMES, type IngestInboundJobData } from "@/queue/queues";
 import { findMessageByProviderMessageId, createMessage } from "@/data/messages";
 import { upsertContact } from "@/data/contacts";
 import { upsertConversationForInbound } from "@/data/conversations";
@@ -79,11 +79,32 @@ export async function processIngestInboundJob(data: IngestInboundJobData): Promi
     direction: "INBOUND",
     type: event.type,
     body: event.body,
-    mediaId: event.media?.id ?? null,
+    // mediaId deliberately NOT set here (M6) — event.media is the
+    // PROVIDER's own transient reference (a Baileys download key / a Meta
+    // media id), not a row in our `Media` table. That row doesn't exist
+    // yet; it's created by the download-media job enqueued just below,
+    // which links Message.mediaId once the bytes are actually downloaded
+    // and stored (src/services/media/download-and-store.ts). Setting
+    // mediaId to the provider's own ephemeral id here would silently break
+    // every mediaId-scoped lookup in src/data/media.ts.
     interactivePayload: event.interactive ? toJson(event.interactive) : undefined,
     rawPayload: toJson(event.raw),
     metaTimestamp: event.timestamp,
   });
+
+  // M6 (architecture.md §8, §6): enqueued in the SAME TICK as the message
+  // insert, never lazily — Meta's media download URLs are short-lived
+  // (context.md §4.4), so waiting until an agent opens the chat risks
+  // permanent loss.
+  if (event.media) {
+    await getDownloadMediaQueue().add(QUEUE_NAMES.downloadMedia, {
+      organizationId,
+      provider,
+      channelId: event.channelId,
+      messageId: message.id,
+      mediaRef: event.media,
+    });
+  }
 
   logger.info("message ingested", {
     organizationId,
@@ -94,6 +115,7 @@ export async function processIngestInboundJob(data: IngestInboundJobData): Promi
     provider,
     providerMessageId: event.providerMessageId,
     messageType: message.type,
+    hasMedia: event.media != null,
   });
 
   await publishMessageCreated(organizationId, conversation.id, message, { correlationId });

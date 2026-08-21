@@ -45,3 +45,22 @@ export function messagePreviewText(message: { type: MessageType; body: string | 
 export function isOutbound(direction: Direction): boolean {
   return direction === "OUTBOUND";
 }
+
+/**
+ * M6: `Message.body` for a LOCATION message holds a plain `"lat,lng"`
+ * string (src/providers/baileys/normalize.ts — there is no dedicated
+ * lat/lng column in context.md §7.4's schema). Parses it back out for
+ * rendering a map link (context.md §10.3: "location (map link or
+ * coordinates)"); returns null for anything that doesn't match (no
+ * coordinates captured, or a non-LOCATION message), so callers can fall
+ * back to the generic placeholder.
+ */
+export function parseLocationBody(body: string | null): { lat: number; lng: number } | null {
+  if (!body) return null;
+  const match = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(body.trim());
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng };
+}

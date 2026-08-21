@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { createOrganization } from "@/data/organizations";
 import { createChannel } from "@/data/channels";
-import type { NormalizedInboundEvent } from "@/providers/types";
+import type { MediaReference, NormalizedInboundEvent } from "@/providers/types";
+import { getDownloadMediaQueue } from "@/queue/queues";
 import { processIngestInboundJob } from "./ingest-inbound.consumer";
 
 /**
@@ -155,5 +156,53 @@ describe("processIngestInboundJob (real Postgres, no mocking)", () => {
     expect(message).not.toBeNull();
     expect(message?.type).toBe("UNSUPPORTED");
     expect(message?.rawPayload).toEqual(rawPayload);
+  });
+
+  /**
+   * M6 (architecture.md §8/§6): "enqueued in the SAME TICK as the message
+   * insert" — this is the ingest side of that guarantee (the download
+   * itself is covered for real in
+   * src/services/media/download-and-store.integration.test.ts). Two things
+   * this test pins down: the persisted Message's `mediaId` starts null (the
+   * provider's own transient media reference is NOT mistaken for our
+   * Media.id — see this file's own doc comment above the createMessage
+   * call), and a real download-media BullMQ job lands with the exact
+   * mediaRef the event carried.
+   */
+  it("an inbound event with media leaves mediaId null and enqueues a real download-media job", async () => {
+    const { org, channel } = await makeOrgWithChannel("Media Org");
+    const providerMessageId = `media-${suffix}-1`;
+    const mediaRef: MediaReference = {
+      id: "/v/xyz",
+      mimeType: "image/jpeg",
+      directPath: "/v/xyz",
+      mediaKey: Buffer.from([9, 9, 9]).toString("base64"),
+    };
+    const event = makeEvent(channel.id, {
+      providerMessageId,
+      from: `91400${suffix}`,
+      type: "IMAGE",
+      body: "a photo",
+      media: mediaRef,
+    });
+
+    await processIngestInboundJob({ organizationId: org.id, provider: "baileys", event });
+
+    const message = await prisma.message.findFirst({ where: { organizationId: org.id, providerMessageId } });
+    expect(message?.type).toBe("IMAGE");
+    expect(message?.mediaId).toBeNull(); // not yet downloaded — see the doc comment above
+
+    const queue = getDownloadMediaQueue();
+    const waitingJobs = await queue.getJobs(["waiting", "active", "delayed"]);
+    const job = waitingJobs.find((j) => j.data.messageId === message?.id);
+    expect(job).toBeDefined();
+    expect(job?.data).toMatchObject({
+      organizationId: org.id,
+      provider: "baileys",
+      channelId: channel.id,
+      messageId: message?.id,
+      mediaRef,
+    });
+    await job?.remove();
   });
 });
