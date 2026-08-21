@@ -3,6 +3,8 @@ import type { IngestInboundJobData } from "@/queue/queues";
 import { findMessageByProviderMessageId, createMessage } from "@/data/messages";
 import { upsertContact } from "@/data/contacts";
 import { upsertConversationForInbound } from "@/data/conversations";
+import { publishMessageCreated } from "@/services/realtime/publish";
+import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
  * The transport-agnostic heart of inbound ingestion (architecture.md §6).
@@ -28,15 +30,34 @@ import { upsertConversationForInbound } from "@/data/conversations";
  *     so BullMQ's retry/backoff can do its job — "never throw" here means
  *     never throw on data we can still faithfully persist, not "swallow
  *     real bugs silently."
+ *
+ * M3 addition: after `createMessage` persists the row, publish a
+ * `message.created` realtime event (src/services/realtime/publish.ts) so
+ * any SSE-connected browser for this organization sees it live — this is
+ * the one meaningful change to this file's own logic this milestone makes.
+ *
+ * correlationId: generated fresh at the top of this function, not at the
+ * job's true origin (the Baileys socket event / webhook receipt). That
+ * origin lives in src/providers/, which this milestone's brief explicitly
+ * says not to modify beyond an actual bug fix — threading a correlation id
+ * through the enqueue call in src/providers/baileys/adapter.ts would be
+ * exactly that kind of touch. The id below still covers every log line
+ * this milestone actually adds for a given message's processing (dedupe
+ * check → contact/conversation upsert → persist → realtime publish), which
+ * is the traceable unit of work this milestone is responsible for.
  */
 export async function processIngestInboundJob(data: IngestInboundJobData): Promise<void> {
   const { organizationId, provider, event } = data;
+  const correlationId = newCorrelationId();
 
   const existing = await findMessageByProviderMessageId(organizationId, event.providerMessageId);
   if (existing) {
-    console.log(
-      `[ingest-inbound] duplicate providerMessageId=${event.providerMessageId} (provider=${provider}, org=${organizationId}) — skipping, no writes`,
-    );
+    logger.info("duplicate providerMessageId — skipping, no writes", {
+      organizationId,
+      correlationId,
+      provider,
+      providerMessageId: event.providerMessageId,
+    });
     return;
   }
 
@@ -51,7 +72,7 @@ export async function processIngestInboundJob(data: IngestInboundJobData): Promi
     occurredAt: event.timestamp,
   });
 
-  await createMessage(organizationId, {
+  const message = await createMessage(organizationId, {
     conversationId: conversation.id,
     provider,
     providerMessageId: event.providerMessageId,
@@ -63,6 +84,19 @@ export async function processIngestInboundJob(data: IngestInboundJobData): Promi
     rawPayload: toJson(event.raw),
     metaTimestamp: event.timestamp,
   });
+
+  logger.info("message ingested", {
+    organizationId,
+    correlationId,
+    conversationId: conversation.id,
+    contactId: contact.id,
+    messageId: message.id,
+    provider,
+    providerMessageId: event.providerMessageId,
+    messageType: message.type,
+  });
+
+  await publishMessageCreated(organizationId, conversation.id, message, { correlationId });
 }
 
 /**

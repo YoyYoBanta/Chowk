@@ -6,6 +6,7 @@ import type {
   MessageType,
   Prisma,
 } from "@prisma/client";
+import { encodeCursor } from "@/lib/validation/pagination";
 
 /**
  * organizationId-required-first-argument pattern (architecture.md §12), no
@@ -89,4 +90,55 @@ export async function listMessagesInConversation(
     where: { organizationId, conversationId },
     orderBy: { metaTimestamp: "asc" },
   });
+}
+
+export interface MessageCursor {
+  metaTimestamp: Date;
+  id: string;
+}
+
+/**
+ * M3 addition: cursor-paginated, newest-first (context.md §9's explicit
+ * shape for `GET /api/conversations/:id/messages` — "paginated, newest
+ * first, cursor-based"). The thread UI reverses each page for
+ * oldest-at-top/newest-at-bottom display; the API contract itself stays
+ * newest-first so "the next page" always means "older messages",
+ * regardless of how the client chooses to render them.
+ *
+ * Keyset pagination on (metaTimestamp, id), same shape as
+ * listConversationsPage above — fetch limit+1, slice, and only emit a
+ * cursor when there's genuinely more.
+ */
+export async function listMessagesPage(
+  organizationId: string,
+  conversationId: string,
+  opts: { limit: number; cursor?: MessageCursor },
+): Promise<{ items: Message[]; nextCursor: string | null }> {
+  const take = opts.limit + 1;
+  const rows = await prisma.message.findMany({
+    where: {
+      organizationId,
+      conversationId,
+      ...(opts.cursor
+        ? {
+            OR: [
+              { metaTimestamp: { lt: opts.cursor.metaTimestamp } },
+              { metaTimestamp: opts.cursor.metaTimestamp, id: { lt: opts.cursor.id } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ metaTimestamp: "desc" }, { id: "desc" }],
+    take,
+  });
+
+  const hasMore = rows.length > opts.limit;
+  const items = hasMore ? rows.slice(0, opts.limit) : rows;
+  const last = items[items.length - 1];
+  const nextCursor =
+    hasMore && last
+      ? encodeCursor({ metaTimestamp: last.metaTimestamp.toISOString(), id: last.id })
+      : null;
+
+  return { items, nextCursor };
 }

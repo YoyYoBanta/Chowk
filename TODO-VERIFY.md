@@ -234,3 +234,164 @@
   templates (M7)"), so it's a scope read, not a gap discovered late — but
   flagging it here too since context.md §8.0.4 could be read as wanting it
   sooner.
+
+## M3 — Read-only inbox + structured logging
+
+**The live-number gap, as it applies to this milestone.** Same root cause
+as M2's: there is still no dedicated WhatsApp test number, so the literal
+"a message sent from a phone appears in the open browser thread within two
+seconds" done-criterion (context.md §11, implementation-plan.md M3) cannot
+be checked against a real phone. Everything below the phone has been
+verified for real instead:
+
+- A synthetic `NormalizedInboundEvent` pushed onto the real `ingest-inbound`
+  BullMQ queue → consumed by the real `processIngestInboundJob` → written
+  to real Postgres → published over real Redis pub/sub → received by a
+  real HTTP SSE client within seconds
+  (`src/worker/realtime-sse.integration.test.ts`).
+- Cross-tenant isolation proven at three separate layers, not just one:
+  the data layer (`src/data/conversations-messages-tenancy.integration.test.ts`),
+  the API route layer (`src/app/api/conversations/tenancy.integration.test.ts`),
+  and the realtime/SSE layer (the second test in
+  `realtime-sse.integration.test.ts` — two real SSE connections, two real
+  organizations, one real publish, and org B's connection never sees it).
+- The full UI was also manually smoke-tested against a real running
+  `next dev` server (real Postgres-backed seed data, a hand-minted but
+  genuinely-sealed session cookie via `sealSessionCookie`, real `curl`
+  requests) — the conversation list, thread view (including TEXT/IMAGE/
+  LOCATION/UNSUPPORTED rendering and inbound/outbound alignment), contact
+  panel, `GET /api/conversations`, and the SSE endpoint's `: connected`
+  handshake all confirmed working end to end, not just under `vitest`.
+
+Once a dedicated test number exists: run `npm run worker` with an ACTIVE
+Baileys channel, have a browser tab open on `/dashboard/conversations/:id`
+for that channel's conversation, send a real WhatsApp message from a
+personal phone, and confirm it appears in the thread without a manual
+refresh, within a couple of seconds. Everything upstream of "does a real
+socket event reach this pipeline" is already proven; that step alone is
+what stays deferred.
+
+**Real judgment calls made building this milestone:**
+
+- **`getSessionFromRequest` (src/lib/auth/session.ts) reads the session
+  off the raw `Request`'s `Cookie` header via iron-session's
+  `getIronSession(request, response, options)` overload, instead of
+  reusing `getCurrentSession()`'s `next/headers` `cookies()` path.**
+  `next/headers`' `cookies()`/`headers()` only work inside the
+  AsyncLocalStorage request-scope Next's own server sets up around a real
+  request — reusing it in a Route Handler would have made the handler
+  impossible to call directly (e.g. from a test, or from the SSE bridge
+  server below) without also standing up a full `next dev`/`next start`
+  process. The `getIronSession(request, response, ...)` overload instead
+  parses the `Cookie` header straight off the `Request` object with no
+  framework-internal context required — same production behavior, but
+  testable by direct invocation too. `requireApiSession` (src/lib/auth/
+  guard.ts) is the Route Handler equivalent of `requireSession()`/
+  `requireRole()`, returning a 401 JSON response instead of redirecting
+  (redirecting an API/fetch/EventSource caller to `/login` makes no sense).
+- **`sealSessionCookie` (src/lib/auth/session.ts) is test-support code
+  living in a production auth file.** It mints a validly-sealed session
+  cookie value without driving the actual login form/server action —
+  needed because the milestone's own required tests (API tenancy, SSE
+  tenancy/delivery) need to authenticate as a specific, disposable
+  organization/session without a browser. Kept as a clearly-documented,
+  narrow addition (one function, doc comment explicit that application
+  code never calls it) rather than building a separate test-auth harness
+  file, since it's a one-line wrapper around iron-session's own `sealData`
+  using the exact same `sessionOptions` the rest of the module already
+  defines.
+- **The SSE integration test uses a thin Node `http` bridge server, not a
+  real `next dev`/`next start` child process.** The milestone brief asks
+  for "an actual HTTP request... not a mocked one" reaching `/api/events`.
+  A full Next server (port allocation, readiness polling, a real boot) is
+  heavier and more failure-prone to drive from inside a Vitest process
+  than the alternative chosen here: a minimal `http.createServer` that,
+  per request, builds a real `NextRequest` from the incoming socket and
+  calls the actual exported `GET` function from
+  `src/app/api/events/route.ts` directly, then streams its real
+  `ReadableStream` response body back over a real TCP socket via genuine
+  `fetch()` on the test side. Everything below the routing/dev-server
+  plumbing — session auth, Redis subscribe, SSE framing, the full queue →
+  consumer → DB → publish pipeline — is the unmodified, real application
+  code path; only Next's own request-routing layer is bypassed. Judged an
+  acceptable trade given the milestone's actual concern (does the realtime
+  pipeline work end to end over a real socket, not "does Next's router
+  dispatch to this file").
+- **Subscribe-before-"connected" ordering in `src/app/api/events/route.ts`
+  is a genuine correctness fix, not just a test convenience.** Redis
+  pub/sub has no replay/persistence — a publish that lands before a
+  subscriber's `SUBSCRIBE` command has actually registered with Redis is
+  simply missed by that connection, permanently. The route now awaits
+  `subscribeToOrgEvents` before emitting the `: connected` SSE comment, so
+  "connection observed as open" and "this connection will now see events
+  published from this point forward" are the same guarantee. This closes
+  a real (if narrow — sub-millisecond in practice, since Redis is local)
+  race window that existed in an earlier draft of this route, caught by
+  writing the SSE delivery test deterministically rather than with a fixed
+  sleep.
+- **Cursor pagination's cursor shape is a plain base64url-encoded JSON
+  object (`{ <sortField>: isoString, id }`), not a signed/opaque token.**
+  context.md §9 only requires cursor-based pagination, not tamper-proofing
+  the cursor itself — a forged cursor can only ever change which page of
+  the CALLER'S OWN organization's rows comes back (every list query is
+  still `organizationId`-scoped independently of the cursor), so there is
+  no tenancy or authorization value in signing it. Kept simple
+  (`src/lib/validation/pagination.ts`) rather than adding HMAC signing for
+  a value that carries no trust decision.
+- **The logger's `LogFields` is a closed interface with no index
+  signature, specifically so it has no `body`/`content`/`text` property**
+  (context.md §12: "No message bodies in application logs"). This makes
+  the common accidental case — spreading a `Message` row into a log call's
+  fields object — a TypeScript excess-property-check error at the call
+  site, proven directly in `src/lib/logging/logger.test.ts` via a
+  `// @ts-expect-error` assertion that `tsc --noEmit` itself checks stays
+  accurate. It does not stop a value typed `any`/`unknown` from being cast
+  through, which is a real, acknowledged limit of a compile-time-only
+  guarantee — there is no runtime scrubbing/redaction layer here, by
+  design (the milestone brief asked for something "boring", not a full
+  redaction pipeline).
+- **`correlationId` in the ingest-inbound consumer is generated at the top
+  of `processIngestInboundJob` (queue-consumption time), not at the true
+  origin of the inbound event** (the Baileys socket's `messages.upsert`
+  handler in `src/providers/baileys/adapter.ts`, where the job is actually
+  enqueued). Threading a correlation id through that enqueue call would
+  have meant modifying a file under `src/providers/` beyond what this
+  milestone's brief permits ("Do not modify `src/providers/`... beyond
+  what's already there"). The id still covers every log line this
+  milestone's own new code adds for one message's processing — dedupe
+  check → contact/conversation upsert → persist → realtime publish — which
+  is the traceable unit of work this milestone is actually responsible
+  for. Revisit this once a milestone that's allowed to touch the provider
+  adapters threads a correlation id all the way from the socket event
+  itself.
+- **The realtime publisher (`src/services/realtime/publish.ts`) uses its
+  own dedicated ioredis connection, separate from both the BullMQ queue's
+  shared connection (`src/queue/connection.ts`) and each SSE connection's
+  own per-client subscriber.** This isn't optional: once an ioredis
+  connection issues `SUBSCRIBE`, the Redis protocol restricts it to
+  further pub/sub commands only — it can never again be used to `PUBLISH`
+  or run a normal command. A single subscriber connection per SSE client
+  (rather than one pattern-subscribed connection shared across every
+  client) was chosen specifically so a cross-tenant leak is structurally
+  impossible (each connection only ever subscribes to its own org's exact
+  channel name) rather than merely policy-enforced by a filter that could
+  have a bug.
+- **No filters (status/assignedTo/channelId/tag/search) on
+  `GET /api/conversations`, no computed 24h-window state on the detail
+  route, no assignment/avatar on the list UI, no tags/notes/custom-fields
+  on the contact panel.** All explicitly deferred per the milestone brief
+  itself (M8/M9 for filters/tags/assignment, M5 for the window) — noted
+  here only so it's clear these are scope decisions carried out exactly as
+  specified, not gaps discovered late.
+- **`prisma/seed.ts`'s new `seedM3Inbox()` builds its demo data through the
+  real data-access layer calls (`upsertContact` →
+  `upsertConversationForInbound` → `createMessage`)**, the same functions
+  the real ingest-inbound consumer calls, rather than raw
+  `prisma.*.create()` — so `unreadCount`/`lastMessageAt`/`lastInboundAt`
+  end up in exactly the state real ingestion would produce, and a human
+  running `npm run dev` right after `npm run seed` sees a populated,
+  realistic inbox (including one conversation exercising IMAGE/LOCATION/
+  UNSUPPORTED placeholders) without needing a live WhatsApp number at all.
+  Idempotent only for its own concern (skips an org that already has any
+  conversation), matching `seedM2Channels()`'s existing idiom — M1's own
+  org/user seeding is still not idempotent, unchanged from M2's note above.

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { getCurrentSession, type SessionData } from "./session";
+import { NextResponse } from "next/server";
+import { getCurrentSession, getSessionFromRequest, type SessionData } from "./session";
 import type { Role } from "@prisma/client";
 
 /**
@@ -30,4 +31,33 @@ export async function requireRole(role: Role): Promise<SessionData> {
     redirect("/dashboard");
   }
   return session;
+}
+
+/**
+ * M3 addition: the API-route counterpart to `requireSession()`. Route
+ * Handlers are hit by `fetch`/`EventSource`, not a browser navigation, so
+ * redirecting to `/login` (what `requireSession()` does) makes no sense
+ * here — an unauthenticated request gets a 401 JSON body instead, and it's
+ * on the caller to decide what to do with that.
+ *
+ * Returns a discriminated result rather than throwing/redirecting so
+ * route handlers stay simple:
+ *
+ *   const auth = await requireApiSession(request);
+ *   if (!auth.session) return auth.response;
+ *   const { organizationId } = auth.session; // real, never a query param
+ */
+export type ApiSessionResult =
+  | { session: SessionData; response?: undefined }
+  | { session: null; response: NextResponse };
+
+export async function requireApiSession(request: Request): Promise<ApiSessionResult> {
+  const session = await getSessionFromRequest(request);
+  if (!session) {
+    return {
+      session: null,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+  return { session };
 }

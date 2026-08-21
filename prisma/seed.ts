@@ -17,6 +17,9 @@ import { prisma } from "../src/lib/prisma";
 import { createOrganization, listOrganizations } from "../src/data/organizations";
 import { createUser } from "../src/data/users";
 import { createChannel, listChannelsInOrg } from "../src/data/channels";
+import { upsertContact } from "../src/data/contacts";
+import { upsertConversationForInbound, listConversationsInOrg } from "../src/data/conversations";
+import { createMessage } from "../src/data/messages";
 import { hashPassword } from "../src/lib/auth/password";
 
 const DEV_PASSWORD = "chowk-dev-password";
@@ -94,6 +97,95 @@ async function seedM2Channels(): Promise<void> {
   );
 }
 
+/**
+ * A handful of contacts/conversations/messages per organization, built
+ * through the exact same data-layer calls the real ingest-inbound
+ * consumer uses (upsertContact → upsertConversationForInbound →
+ * createMessage) rather than raw `prisma.*.create` — so seeded data has
+ * the same shape (unreadCount incremented per message, lastMessageAt/
+ * lastInboundAt set, etc.) real ingestion would produce. This is what lets
+ * `npm run dev` show a populated inbox (M3's list/thread UI) without a
+ * live WhatsApp number.
+ *
+ * Deliberately exercises a few different `MessageType`s (including
+ * `UNSUPPORTED`) per conversation so the thread view's per-type
+ * placeholders (context.md §10.3) are visible without hand-testing.
+ *
+ * Idempotent for its own concern only, same spirit as seedM2Channels:
+ * skipped entirely for an org that already has at least one conversation.
+ */
+async function seedM3Inbox(): Promise<void> {
+  const orgs = await listOrganizations();
+  let seededOrgs = 0;
+
+  for (const org of orgs) {
+    const existingConversations = await listConversationsInOrg(org.id);
+    if (existingConversations.length > 0) continue;
+
+    const [channel] = await listChannelsInOrg(org.id);
+    if (!channel) continue;
+
+    const contacts = [
+      { waId: `91900${org.id.slice(-6)}01`, name: "Priya Sharma" },
+      { waId: `91900${org.id.slice(-6)}02`, name: "Rahul Verma" },
+      { waId: `91900${org.id.slice(-6)}03`, name: null },
+    ];
+
+    const now = Date.now();
+    let conversationIndex = 0;
+
+    for (const contactInput of contacts) {
+      conversationIndex += 1;
+      const contact = await upsertContact(org.id, contactInput);
+
+      // Spread conversations' last-activity times apart so the list's
+      // most-recent-first ordering is visibly meaningful.
+      const baseTime = now - conversationIndex * 3_600_000;
+
+      const events: Array<{
+        offsetMs: number;
+        direction: "INBOUND" | "OUTBOUND";
+        type: "TEXT" | "IMAGE" | "LOCATION" | "UNSUPPORTED";
+        body?: string | null;
+      }> = [
+        { offsetMs: -600_000, direction: "INBOUND", type: "TEXT", body: "Hi, is my order shipped yet?" },
+        { offsetMs: -540_000, direction: "OUTBOUND", type: "TEXT", body: "Let me check that for you." },
+        { offsetMs: -60_000, direction: "INBOUND", type: "IMAGE", body: "Photo of the damaged package" },
+      ];
+      if (conversationIndex === 1) {
+        events.push({ offsetMs: -30_000, direction: "INBOUND", type: "LOCATION", body: null });
+        events.push({ offsetMs: -10_000, direction: "INBOUND", type: "UNSUPPORTED", body: null });
+      }
+
+      let conversationId: string | undefined;
+      for (const event of events) {
+        const occurredAt = new Date(baseTime + event.offsetMs);
+        const conversation = await upsertConversationForInbound(org.id, {
+          channelId: channel.id,
+          contactId: contact.id,
+          occurredAt,
+        });
+        conversationId = conversation.id;
+        await createMessage(org.id, {
+          conversationId: conversation.id,
+          provider: channel.provider,
+          providerMessageId: `seed-${org.id}-${contact.id}-${event.offsetMs}`,
+          direction: event.direction,
+          type: event.type,
+          body: event.body ?? null,
+          rawPayload: { seed: true, type: event.type },
+          metaTimestamp: occurredAt,
+        });
+      }
+      void conversationId;
+    }
+
+    seededOrgs += 1;
+  }
+
+  console.log(`Seeded M3: inbox demo data (contacts/conversations/messages) for ${seededOrgs} organization(s).`);
+}
+
 async function main(): Promise<void> {
   // --- M1: tenancy + auth skeleton ---
   await seedM1TenancyAndUsers();
@@ -101,7 +193,10 @@ async function main(): Promise<void> {
   // --- M2: provider adapter + ingestion ---
   await seedM2Channels();
 
-  // --- M3+: append new sections below this line, do not reorder above ---
+  // --- M3: read-only inbox demo data ---
+  await seedM3Inbox();
+
+  // --- M4+: append new sections below this line, do not reorder above ---
 }
 
 main()
