@@ -81,3 +81,20 @@ export interface MessageCreatedRealtimeEvent {
   conversationId: string;
   message: MessageDTO;
 }
+
+/** M4 addition: published after every status transition a sent message
+ * goes through (PENDING -> SENT/FAILED via the send-message consumer,
+ * or forward progress via the status-update consumer) — see
+ * src/services/realtime/publish.ts's publishMessageStatusChanged. Carries
+ * the full message row, same as message.created, so a client that hasn't
+ * seen this id yet can treat it identically to a brand-new message. */
+export interface MessageStatusChangedRealtimeEvent {
+  type: "message.status_changed";
+  organizationId: string;
+  conversationId: string;
+  message: MessageDTO;
+}
+
+export type ConversationRealtimeEvent =
+  | MessageCreatedRealtimeEvent
+  | MessageStatusChangedRealtimeEvent;

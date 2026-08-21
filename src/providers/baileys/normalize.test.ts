@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { WAMessage } from "@whiskeysockets/baileys";
-import { jidToDigits, normalizeBaileysMessage } from "./normalize";
+import { WAMessageStatus, type WAMessage, type WAMessageUpdate } from "@whiskeysockets/baileys";
+import {
+  digitsToJid,
+  jidToDigits,
+  normalizeBaileysMessage,
+  normalizeBaileysStatusUpdate,
+} from "./normalize";
 
 /**
  * Pure unit tests for the Baileys -> NormalizedInboundEvent mapping — no
@@ -32,6 +37,13 @@ describe("jidToDigits", () => {
 
   it("strips any non-digit characters", () => {
     expect(jidToDigits("+91-1234-567890@s.whatsapp.net")).toBe("911234567890");
+  });
+});
+
+describe("digitsToJid", () => {
+  it("is the inverse of jidToDigits for the individual-chat case", () => {
+    expect(digitsToJid("911234567890")).toBe("911234567890@s.whatsapp.net");
+    expect(jidToDigits(digitsToJid("911234567890"))).toBe("911234567890");
   });
 });
 
@@ -120,5 +132,68 @@ describe("normalizeBaileysMessage", () => {
     const msg = fakeMessage({ message: undefined });
     const event = normalizeBaileysMessage("channel-1", msg);
     expect(event?.type).toBe("UNSUPPORTED");
+  });
+});
+
+/**
+ * `normalizeBaileysStatusUpdate` tests: real `WAMessageStatus` enum values
+ * (from the package's own `.d.ts`, see normalize.ts's doc comment) are used
+ * to build fixtures, so this exercises the actual mapping the real
+ * `messages.update` event would produce, same spirit as the tests above.
+ */
+function fakeStatusUpdate(overrides: Partial<WAMessageUpdate>): WAMessageUpdate {
+  return {
+    key: { remoteJid: "911234567890@s.whatsapp.net", fromMe: true, id: "WAMID_1" },
+    update: {},
+    ...overrides,
+  } as WAMessageUpdate;
+}
+
+describe("normalizeBaileysStatusUpdate", () => {
+  it("maps SERVER_ACK to SENT", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.SERVER_ACK } });
+    const event = normalizeBaileysStatusUpdate("channel-1", update);
+    expect(event).toMatchObject({ channelId: "channel-1", providerMessageId: "WAMID_1", status: "SENT" });
+  });
+
+  it("maps DELIVERY_ACK to DELIVERED", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.DELIVERY_ACK } });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)?.status).toBe("DELIVERED");
+  });
+
+  it("maps READ to READ", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.READ } });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)?.status).toBe("READ");
+  });
+
+  it("maps PLAYED (voice-note ack) to READ", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.PLAYED } });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)?.status).toBe("READ");
+  });
+
+  it("maps ERROR to FAILED with a generic, honest error code/message — never inventing a specific one", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.ERROR } });
+    const event = normalizeBaileysStatusUpdate("channel-1", update);
+    expect(event?.status).toBe("FAILED");
+    expect(event?.errorCode).toBe("BAILEYS_SEND_ERROR");
+    expect(event?.errorMessage).toEqual(expect.any(String));
+  });
+
+  it("returns null for PENDING (no information beyond what we already know)", () => {
+    const update = fakeStatusUpdate({ update: { status: WAMessageStatus.PENDING } });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)).toBeNull();
+  });
+
+  it("returns null when the update carries no ack-status change at all", () => {
+    const update = fakeStatusUpdate({ update: { starred: true } });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)).toBeNull();
+  });
+
+  it("returns null when the key has no usable message id", () => {
+    const update = fakeStatusUpdate({
+      key: { remoteJid: "911234567890@s.whatsapp.net", fromMe: true, id: undefined },
+      update: { status: WAMessageStatus.READ },
+    });
+    expect(normalizeBaileysStatusUpdate("channel-1", update)).toBeNull();
   });
 });

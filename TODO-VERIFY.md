@@ -395,3 +395,194 @@ what stays deferred.
   Idempotent only for its own concern (skips an org that already has any
   conversation), matching `seedM2Channels()`'s existing idiom — M1's own
   org/user seeding is still not idempotent, unchanged from M2's note above.
+
+## M4 — Outbound text
+
+**The live-number gap, as it applies to this milestone.** Same root cause
+as M2/M3's: there is still no dedicated WhatsApp test number, so the
+literal "an agent replies from the UI, the message arrives on the phone,
+and the tick indicator progresses to read" done-criterion (context.md §11,
+implementation-plan.md M4) cannot be checked against a real phone or a real
+WhatsApp delivery receipt. Everything else in the pipeline has been
+verified for real instead:
+
+- The send pipeline end to end against real Postgres + real BullMQ, with
+  only `src/providers/factory.ts`'s `getWhatsAppProvider()` mocked to a
+  test-double provider (never Prisma, the queue, or the consumer logic
+  itself) — `src/worker/consumers/send-message.consumer.integration.test.ts`:
+  success (→ `SENT` + `providerMessageId` captured), terminal failure (→
+  `FAILED` + `errorCode`/`errorMessage`, resolves without throwing so
+  BullMQ never retries it), retryable failure (→ throws, message stays
+  `PENDING`, never prematurely `FAILED`), and the crash-recovery ordering
+  proof itself (a `PENDING` row exists immediately after
+  `sendTextMessage()` returns, and survives — still `PENDING`, not lost —
+  even when the actual provider call is made to throw outright).
+- Forward-only status progression against real Postgres, fed synthetic
+  `NormalizedStatusEvent`s in deliberately out-of-order sequences through
+  the real `processStatusUpdateJob` —
+  `src/worker/consumers/status-update.consumer.integration.test.ts`: the
+  normal forward path (`SENT → DELIVERED → READ`), a stale `SENT` arriving
+  after `READ` is ignored (row stays `READ`), a `FAILED` arriving after
+  `SENT` applies and is then itself terminal (nothing moves past it), an
+  unknown `providerMessageId` is logged and dropped without throwing, and
+  the `provider` scoping on the lookup itself (a matching id under a
+  different `provider` string is correctly not found).
+- The pure ranking function itself, in isolation, with zero DB —
+  `src/lib/messages/status-progression.test.ts` — this is context.md §13's
+  named correctness-bug hotspot, exercised directly against the ranking
+  logic, not just indirectly through the integration tests above.
+- The real Baileys adapter's graceful-failure path (not the
+  factory-mocked one) — `src/providers/baileys/adapter.test.ts`: calling
+  the actual `sendText()`/`markAsRead()` against a channel that was never
+  `connect()`-ed resolves cleanly (a well-formed retryable `SendResult` /
+  `undefined`, respectively) rather than throwing — the "write the failure
+  path first" rule (context.md rule 6), exercised against "no session"
+  since no network/protocol error is reachable without a live socket.
+- The real Baileys `messages.update` → `NormalizedStatusEvent` mapping,
+  using the package's own real `WAMessageStatus` enum values as fixtures —
+  `src/providers/baileys/normalize.test.ts`.
+
+Once a dedicated test number exists: run `npm run worker` with an ACTIVE
+Baileys channel, reply from `/dashboard/conversations/:id`'s composer, and
+confirm the message arrives on the paired phone and the tick indicator in
+the UI progresses PENDING → SENT → DELIVERED → READ as the phone's own
+receipts come back. Everything upstream of "does a real socket actually
+send/receive" is already proven for real; that step alone stays deferred.
+
+**Real Baileys API shapes used, and how they were confirmed (not guessed,
+per context.md rule 1/2):**
+
+- `sock.sendMessage(jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions): Promise<proto.WebMessageInfo | undefined>`
+  — read directly from
+  `node_modules/@whiskeysockets/baileys/lib/Socket/messages-send.d.ts`.
+  `{ text: string }` (used for our plain-text send) is confirmed as a real
+  member of `AnyRegularMessageContent` in
+  `lib/Types/Message.d.ts`. The `undefined` branch of the return type is
+  handled explicitly (`NO_MESSAGE_ID_RETURNED`, retryable) rather than
+  assumed away.
+- `sock.readMessages(keys: WAMessageKey[]): Promise<void>` — read directly
+  from `node_modules/@whiskeysockets/baileys/lib/Socket/chats.d.ts`.
+- `messages.update: WAMessageUpdate[]` event, `WAMessageUpdate = { update: Partial<WAMessage>; key: proto.IMessageKey }`
+  — read directly from `lib/Types/Events.d.ts` / `lib/Types/Message.d.ts`.
+- The ack-status enum itself — `ERROR = 0, PENDING = 1, SERVER_ACK = 2,
+  DELIVERY_ACK = 3, READ = 4, PLAYED = 5` — read directly from the
+  generated `WAProto/index.d.ts`'s `proto.WebMessageInfo.Status`, accessed
+  in our own code via the package's own top-level alias `WAMessageStatus`
+  (`export declare const WAMessageStatus: typeof proto.WebMessageInfo.Status`
+  in `lib/Types/Message.d.ts`, re-exported from the package root) rather
+  than reaching into the `proto` namespace directly.
+
+None of the above were inferred from training data or guessed — each was
+read from the installed package's own `.d.ts` files (version `6.7.24`, same
+pinned version as M2) before being used.
+
+**Judgment calls made building this milestone, flagged rather than
+silently decided:**
+
+- **`sendText()`'s "no active session for this channel" failure is
+  classified `retryable: true`, not terminal.** There is no live WhatsApp
+  session to observe, so this is a genuine judgment call rather than an
+  observed fact: a channel with no live socket may simply be mid-reconnect
+  (the adapter already retries its own socket connection with backoff on
+  an unexpected disconnect — see `handleConnectionUpdate`), so a later
+  retry has a real chance of succeeding. The same `retryable: true`
+  default is used for any thrown error from `sock.sendMessage()` itself
+  (network failure, a malformed jid, etc.) rather than guessing which
+  thrown errors are "really" terminal — context.md rule 2 ("never invent
+  an error code") argues for the safer default here, since BullMQ's own
+  bounded retry/backoff (`src/queue/queues.ts`, `attempts: 5`) still
+  resolves to a `FAILED` row via `markSendMessageJobExhausted` once
+  attempts run out, rather than either infinite-retrying or wrongly
+  giving up on the first attempt. Revisit this once a live session exists
+  to actually observe which failures are transient versus permanent.
+- **Baileys' `messages.update` carries only a numeric ack status, not a
+  structured per-message failure reason the way Meta's Cloud API error
+  codes do (context.md §4.7).** A `FAILED` status normalized from Baileys'
+  `ERROR` ack therefore always carries the same generic
+  `errorCode: "BAILEYS_SEND_ERROR"` / a generic human-readable message —
+  this is an honest representation of what Baileys actually tells us, not
+  a stand-in for a real code we simply haven't looked up yet.
+- **`markAsRead(channelId, providerMessageId)`'s interface signature
+  (fixed at M2, context.md §8.0.1) doesn't carry the `remoteJid` Baileys'
+  own `readMessages()` actually needs.** The Baileys adapter reconstructs
+  it by looking the message up through the real, org-scoped data layer
+  (`findMessageByProviderMessageId` → `getConversationWithContact` →
+  `contact.waId`), using `organizationId` from the `Channel` row already
+  held in the adapter's own `channels` map (populated by `connect()`) —
+  the same precedent `handleIncomingMessage`'s `updateChannelStatus` call
+  already established at M2. This keeps context.md rule 4 ("every database
+  query scoped by organization_id, no exceptions") intact even though the
+  public interface signature alone doesn't carry an organizationId.
+- **The `status-update` queue's job payload threads `organizationId` and
+  `provider` at the queue-payload level, exactly mirroring
+  `IngestInboundJobData`'s M2 precedent** (`src/queue/queues.ts`), rather
+  than inventing a new pattern — both are supplied by the Baileys adapter
+  from the `Channel` row it already holds from `connect()`, so
+  `src/data/messages.ts`'s `findMessageByProviderAndProviderMessageId` stays
+  organizationId-first with zero exceptions, just like every other
+  data-access function.
+- **`send-message.ts` stamps the outbound `Message.provider` field with
+  `getWhatsAppProvider().name`** (the currently-configured transport)
+  rather than looking up the conversation's `Channel.provider` field. In
+  practice these should always agree (one transport is active platform-wide
+  per the `WHATSAPP_PROVIDER` env var), but nothing currently enforces
+  that a `Channel` row's own `provider` column can't drift from the
+  globally active one. Using `.name` avoids an extra query in the hot
+  send path and matches "which adapter is actually about to attempt this
+  send" more directly than a stored column would; flagged here as a
+  reasonable default worth reconsidering if channel-level provider
+  overrides are ever introduced.
+- **A retryable send failure or an uncaught throw from the provider is
+  treated identically by `processSendMessageJob`** — both simply propagate
+  as a thrown error, handing the retry decision to BullMQ's own
+  `attempts`/`backoff` config. No attempt is made to distinguish "the
+  adapter deliberately told us this is retryable" from "the adapter's own
+  code threw an exception we didn't expect" — both are equally
+  "something went wrong that a retry might fix," and both are equally
+  covered by the bounded-retry safety net
+  (`markSendMessageJobExhausted`) once attempts run out.
+- **No dedicated API-route-level integration test for `POST
+  /api/conversations/:id/messages` or `POST /api/conversations/:id/read`**
+  beyond the service-layer tests above and the routes' own close
+  resemblance to M3's already-tested route conventions (`requireApiSession`,
+  correlation id, tenancy 404, logger request start/end). The substantive
+  logic (PENDING-before-enqueue ordering, retryable/terminal branching,
+  forward-only status application) lives in the services/consumers and is
+  covered there for real; the routes themselves are thin, structurally
+  identical wiring to the already-integration-tested M3 routes. Worth
+  adding a dedicated route-level test if these routes grow more logic of
+  their own in a later milestone.
+
+**Post-implementation verification fix (2026-08-21) — `npm run build` failure,
+unrelated to M4's own application logic:**
+
+- `npm run build` (Turbopack) failed with `Module not found: Can't resolve
+  'jimp'`, tracing through
+  `@whiskeysockets/baileys/lib/Utils/messages-media.js` →
+  `src/providers/baileys/adapter.ts` → `src/providers/factory.ts` →
+  `src/services/messages/send-message.ts` → the new
+  `POST /api/conversations/:id/messages` route. Root cause, confirmed by
+  reading the installed package's own `package.json`: `jimp` and `sharp`
+  are `peerDependencies` of `@whiskeysockets/baileys@6.7.24` (`jimp` marked
+  `optional: true` in `peerDependenciesMeta`; `sharp` is not marked optional
+  there, an apparent upstream metadata inconsistency, but is used
+  identically) — `lib/Utils/messages-media.js` dynamically
+  `import('jimp').catch(() => {})`/`import('sharp').catch(() => {})`s them
+  purely for outbound-image thumbnail generation, a feature this project
+  doesn't use at all (media send is M6's job, out of scope here) and
+  neither package is installed. Baileys's own runtime code already
+  degrades gracefully when both are absent (the `.catch()`); the failure
+  was Turbopack's static bundler trying to eagerly resolve those dynamic
+  imports at build time rather than deferring to a runtime `require()`.
+  **Fix**: added `serverExternalPackages: ["@whiskeysockets/baileys"]` to
+  `next.config.ts` (the stable, non-experimental key — confirmed against
+  the installed Next 16.3.1's own `node_modules/next/dist/server/config-shared.d.ts`,
+  which also lists a deprecated pre-16 alias) — this tells Next to
+  `require()` the whole package at runtime for server code instead of
+  bundling it, which is exactly the code path where baileys's own
+  try/catch already handles the missing-optional-dependency case. No
+  application code changed, no new dependency added, and no `src/providers/`
+  file touched — this is purely a bundler-configuration correction. Full
+  verification loop re-run clean after this change (`tsc`, `vitest`,
+  `test:integration`, `build`, `eslint` all green — see PROGRESS.md's M4
+  section for the exact counts).

@@ -99,6 +99,60 @@ export async function publishMessageCreated(
   }
 }
 
+/**
+ * M4 addition: a `message.status_changed` event, alongside
+ * `message.created` — same channel-per-org pattern, same publisher
+ * connection. Published by `send-message.consumer.ts` after every status
+ * transition it makes (SENT/FAILED) and by `status-update.consumer.ts`
+ * after every applied (non-ignored) forward transition, so the thread
+ * UI's tick indicators update live over the existing SSE connection rather
+ * than needing a second endpoint. Carries the FULL updated `Message` row
+ * (not just the new status) so a client that has never seen this message
+ * id yet — e.g. a second agent's browser tab that wasn't open when the
+ * message was first created — can treat it exactly like `message.created`
+ * and append it, rather than silently dropping an update for an unknown id.
+ */
+export interface MessageStatusChangedEvent {
+  type: "message.status_changed";
+  organizationId: string;
+  conversationId: string;
+  message: Message;
+}
+
+export async function publishMessageStatusChanged(
+  organizationId: string,
+  conversationId: string,
+  message: Message,
+  fields: { correlationId?: string } = {},
+): Promise<void> {
+  const event: MessageStatusChangedEvent = {
+    type: "message.status_changed",
+    organizationId,
+    conversationId,
+    message,
+  };
+
+  try {
+    await getPublisher().publish(realtimeChannelForOrg(organizationId), JSON.stringify(event));
+    logger.info("published realtime status-changed event", {
+      organizationId,
+      conversationId,
+      messageId: message.id,
+      status: message.status,
+      correlationId: fields.correlationId,
+      route: "realtime.publish",
+    });
+  } catch (error) {
+    logger.error("failed to publish realtime status-changed event", {
+      organizationId,
+      conversationId,
+      messageId: message.id,
+      correlationId: fields.correlationId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export interface OrgEventSubscription {
   unsubscribe: () => Promise<void>;
 }

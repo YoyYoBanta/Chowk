@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { requireApiSession } from "@/lib/auth/guard";
 import { getConversationById } from "@/data/conversations";
 import { listMessagesPage, type MessageCursor } from "@/data/messages";
 import { decodeCursor, paginationQuerySchema, type PaginationQuery } from "@/lib/validation/pagination";
+import { sendTextMessage } from "@/services/messages/send-message";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
@@ -72,6 +74,108 @@ export async function GET(
     });
 
     return NextResponse.json({ messages: items, nextCursor });
+  } catch (error) {
+    logger.error("request failed", {
+      organizationId,
+      correlationId,
+      route,
+      conversationId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/conversations/:id/messages — send a text message
+ * (context.md §9; architecture.md §7's full sequence lives in
+ * src/services/messages/send-message.ts, this route only validates the
+ * body and delegates). Text-only this milestone: media/template sends
+ * are M6/M7, so the schema below has no `type`/`mediaId`/`templateName`
+ * fields at all — a body carrying them is simply ignored (zod strips
+ * unknown keys by default), never half-interpreted as a media/template
+ * send.
+ *
+ * No 24-hour window enforcement here (M5) — every send proceeds
+ * regardless of window state this milestone, per this milestone's own
+ * explicit non-goals.
+ *
+ * Returns 202 (accepted, not yet delivered) with the PENDING message row —
+ * matching architecture.md §7's sequence diagram exactly ("Svc-->>API: 202
+ * { messageId, status: PENDING }").
+ */
+const sendMessageBodySchema = z.object({
+  body: z.string().trim().min(1, "Message body cannot be empty").max(4096),
+});
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const correlationId = newCorrelationId();
+  const route = "POST /api/conversations/:id/messages";
+
+  const auth = await requireApiSession(request);
+  if (!auth.session) return auth.response;
+  const { organizationId, userId } = auth.session;
+  const { id: conversationId } = await context.params;
+
+  logger.info("request start", { organizationId, correlationId, route, conversationId, userId });
+
+  let json: unknown;
+  try {
+    json = await request.json();
+  } catch {
+    logger.warn("request end", {
+      organizationId,
+      correlationId,
+      route,
+      conversationId,
+      statusCode: 400,
+      reason: "invalid json",
+    });
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = sendMessageBodySchema.safeParse(json);
+  if (!parsed.success) {
+    logger.warn("request end", {
+      organizationId,
+      correlationId,
+      route,
+      conversationId,
+      statusCode: 400,
+      reason: "invalid body",
+    });
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  try {
+    const result = await sendTextMessage(
+      { organizationId, conversationId, userId, body: parsed.data.body },
+      { correlationId },
+    );
+
+    if (!result.ok) {
+      logger.info("request end", {
+        organizationId,
+        correlationId,
+        route,
+        conversationId,
+        statusCode: result.status,
+      });
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    logger.info("request end", {
+      organizationId,
+      correlationId,
+      route,
+      conversationId,
+      statusCode: 202,
+      messageId: result.message.id,
+    });
+    return NextResponse.json({ message: result.message }, { status: 202 });
   } catch (error) {
     logger.error("request failed", {
       organizationId,

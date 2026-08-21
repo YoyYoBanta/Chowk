@@ -138,6 +138,23 @@ export async function listConversationsPage(
   return { items, nextCursor };
 }
 
+/**
+ * M4 addition: `POST /api/conversations/:id/read` (context.md §8.2 —
+ * "reset unreadCount locally") resets it unconditionally, regardless of
+ * whether the provider's `markAsRead()` call itself succeeded — local
+ * read-state is our own concern, independent of whether the transport got
+ * the read receipt.
+ */
+export async function resetUnreadCount(
+  organizationId: string,
+  conversationId: string,
+): Promise<void> {
+  await prisma.conversation.updateMany({
+    where: { id: conversationId, organizationId },
+    data: { unreadCount: 0 },
+  });
+}
+
 /** Conversation + contact, for `GET /api/conversations/:id` (detail view).
  * Computed 24h-window state is deliberately NOT included — that's M5. */
 export async function getConversationWithContact(

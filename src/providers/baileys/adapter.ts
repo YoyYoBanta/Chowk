@@ -4,12 +4,15 @@ import makeWASocket, {
   type ConnectionState as BaileysConnectionState,
   type MessageUpsertType,
   type WAMessage,
+  type WAMessageUpdate,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { updateChannelStatus } from "@/data/channels";
-import { getIngestInboundQueue, QUEUE_NAMES } from "@/queue/queues";
+import { findMessageByProviderMessageId } from "@/data/messages";
+import { getConversationWithContact } from "@/data/conversations";
+import { getIngestInboundQueue, getStatusUpdateQueue, QUEUE_NAMES } from "@/queue/queues";
 import { createDbAuthState } from "./session-store";
-import { normalizeBaileysMessage } from "./normalize";
+import { digitsToJid, normalizeBaileysMessage, normalizeBaileysStatusUpdate } from "./normalize";
 import type {
   ConnectionState,
   MediaReference,
@@ -33,28 +36,38 @@ import type {
  * available under the registry's "legacy" dist-tag if the maintainer
  * prefers more stability before a real test number is in the picture).
  *
- * REAL vs STUB in this file, deliberately split along the M2 task list:
+ * REAL vs STUB in this file:
  *  - connect()/disconnect()/getConnectionState()/onInbound()/onStatusUpdate()
- *    are REAL: they open an actual Baileys socket, wire DB-backed session
- *    storage (session-store.ts), reconnect with backoff, and normalize
- *    every real Baileys inbound-message event into NormalizedInboundEvent,
- *    pushed onto the real ingest-inbound BullMQ queue.
- *  - sendText/sendMedia/sendTemplate/markAsRead/downloadMedia/uploadMedia/
- *    listTemplates/createTemplate are STUBS. Explicitly out of scope per
- *    the M2 task list's non-goals ("No outbound send implementation beyond
- *    the stub interface methods (M4)", "No media download pipeline (M6)",
- *    "no templates (M7)") — implementing them for real belongs to those
- *    later milestones, including the Meta-parity simulation work
+ *    (M2) are REAL: they open an actual Baileys socket, wire DB-backed
+ *    session storage (session-store.ts), reconnect with backoff, and
+ *    normalize every real Baileys inbound-message event into
+ *    NormalizedInboundEvent, pushed onto the real ingest-inbound BullMQ
+ *    queue.
+ *  - sendText()/markAsRead() (M4, this milestone) are REAL: real
+ *    `sock.sendMessage(jid, { text })` / `sock.readMessages([key])` calls
+ *    (see their own doc comments below for exactly how the real method
+ *    signatures were confirmed against the package's own `.d.ts`), and the
+ *    real `messages.update` event is normalized (normalize.ts) and pushed
+ *    onto the real status-update BullMQ queue via the same
+ *    `onStatusUpdate(handler)` registration point the interface already
+ *    defined at M2.
+ *  - sendMedia/sendTemplate/downloadMedia/uploadMedia/listTemplates/
+ *    createTemplate remain STUBS — explicitly out of scope until M6
+ *    (media) / M7 (templates), including the Meta-parity simulation work
  *    (window check, template rendering, rate limiting) context.md §8.0.4
- *    describes for this adapter.
+ *    describes for this adapter, none of which is this milestone's job.
  *
- * connect() is code-complete but UNVERIFIED against a real WhatsApp
- * session — there is no dedicated test number available yet (see
- * TODO-VERIFY.md). Every event-shape assumption below comes from reading
- * @whiskeysockets/baileys's own generated .d.ts files directly (Types/
- * Events.d.ts, Types/Message.d.ts, Types/Auth.d.ts), not from training
- * data — TODO-VERIFY.md records which specific shapes were inferred this
- * way versus confirmed against the package's own docs.
+ * connect() (and, as of M4, sendText()/markAsRead()/the messages.update
+ * wiring) is code-complete but UNVERIFIED against a real WhatsApp session
+ * — there is no dedicated test number available yet (see TODO-VERIFY.md).
+ * Every event-shape and method-signature assumption below comes from
+ * reading @whiskeysockets/baileys's own generated .d.ts files directly
+ * (Types/Events.d.ts, Types/Message.d.ts, Types/Auth.d.ts,
+ * Socket/messages-send.d.ts, Socket/chats.d.ts), not from training data —
+ * TODO-VERIFY.md records which specific shapes were inferred this way
+ * versus confirmed against the package's own docs, and which classification
+ * judgment calls (e.g. "no active session" -> retryable vs terminal) were
+ * made in the absence of a live session to observe.
  */
 class BaileysProvider implements WhatsAppProvider {
   readonly name = "baileys" as const;
@@ -99,6 +112,17 @@ class BaileysProvider implements WhatsAppProvider {
     sock.ev.on("messaging-history.set", ({ messages }) => {
       for (const msg of messages) {
         void this.handleIncomingMessage(channel, msg, "append");
+      }
+    });
+
+    // Delivery-receipt / ack updates (M4) — normalized to
+    // NormalizedStatusEvent and pushed onto the same status-update queue
+    // Phase B's webhook receiver will use, via the identical
+    // onStatusUpdate(handler) registration point the interface has defined
+    // since M2 (architecture.md §10).
+    sock.ev.on("messages.update", (updates) => {
+      for (const update of updates) {
+        void this.handleStatusUpdate(channel, update);
       }
     });
   }
@@ -177,6 +201,21 @@ class BaileysProvider implements WhatsAppProvider {
     }
   }
 
+  private async handleStatusUpdate(channel: Channel, update: WAMessageUpdate): Promise<void> {
+    const event = normalizeBaileysStatusUpdate(channel.id, update);
+    if (!event) return; // not an ack-status change we care about — see normalize.ts
+
+    await getStatusUpdateQueue().add(QUEUE_NAMES.statusUpdate, {
+      organizationId: channel.organizationId,
+      provider: "baileys",
+      event,
+    });
+
+    for (const handler of this.statusHandlers) {
+      await handler(event);
+    }
+  }
+
   async disconnect(channelId: string): Promise<void> {
     const sock = this.sockets.get(channelId);
     if (sock) {
@@ -194,15 +233,62 @@ class BaileysProvider implements WhatsAppProvider {
     return this.connectionStates.get(channelId) ?? { status: "disconnected" };
   }
 
-  // --- Stubs: out of scope for M2, see the class doc comment above. ------
+  /**
+   * Real send (M4). `sock.sendMessage(jid, content, options?)` and its
+   * return type (`Promise<proto.WebMessageInfo | undefined>`) are confirmed
+   * directly against the package's own
+   * `lib/Socket/messages-send.d.ts`/`lib/Types/Message.d.ts` — not guessed.
+   * `{ text: string }` is a real member of `AnyMessageContent`
+   * (`lib/Types/Message.d.ts`'s `AnyRegularMessageContent` union), so a
+   * plain-text send needs nothing more elaborate than that.
+   *
+   * "Write the failure path first" (context.md rule 6), exercised here
+   * against the one failure mode that's actually reachable without a live
+   * WhatsApp session: no socket at all for this channel. Classified
+   * `retryable: true` — a channel with no live socket may simply be
+   * mid-reconnect (see the reconnect-with-backoff logic in
+   * handleConnectionUpdate above), so a later retry has a real chance of
+   * succeeding; this is a judgment call recorded in TODO-VERIFY.md, since
+   * there is no live session yet to observe how often that's actually true
+   * in practice. A thrown error from `sock.sendMessage` itself (network
+   * failure, an unrecognized jid, etc.) is likewise defaulted to
+   * `retryable: true` rather than guessing which thrown errors are
+   * "really" terminal — context.md rule 2 ("never invent an error code")
+   * argues for the safer default here: BullMQ's own bounded retry/backoff
+   * (src/queue/queues.ts) still eventually resolves to FAILED via
+   * markSendMessageJobExhausted if the condition doesn't clear.
+   */
+  async sendText(p: SendTextParams): Promise<SendResult> {
+    const sock = this.sockets.get(p.channelId);
+    if (!sock) {
+      return {
+        ok: false,
+        retryable: true,
+        code: "NO_ACTIVE_SESSION",
+        message: "No active WhatsApp session for this channel — it may be reconnecting.",
+      };
+    }
 
-  async sendText(_p: SendTextParams): Promise<SendResult> {
-    return {
-      ok: false,
-      retryable: false,
-      code: "NOT_IMPLEMENTED",
-      message: "baileys: sendText() lands in M4",
-    };
+    try {
+      const sent = await sock.sendMessage(digitsToJid(p.to), { text: p.body });
+      const providerMessageId = sent?.key?.id;
+      if (!providerMessageId) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "NO_MESSAGE_ID_RETURNED",
+          message: "Baileys did not return a message id for this send.",
+        };
+      }
+      return { ok: true, providerMessageId };
+    } catch (error) {
+      return {
+        ok: false,
+        retryable: true,
+        code: "SEND_THREW",
+        message: error instanceof Error ? error.message : "Unknown error sending via Baileys.",
+      };
+    }
   }
 
   async sendMedia(_p: SendMediaParams): Promise<SendResult> {
@@ -223,8 +309,49 @@ class BaileysProvider implements WhatsAppProvider {
     };
   }
 
-  async markAsRead(_channelId: string, _providerMessageId: string): Promise<void> {
-    throw new Error("baileys: markAsRead() lands in M4");
+  /**
+   * Real mark-as-read (M4). `sock.readMessages(keys: WAMessageKey[])` is
+   * confirmed directly against `lib/Socket/chats.d.ts` — not guessed.
+   *
+   * The interface (context.md §8.0.1) only gives this method
+   * `(channelId, providerMessageId)`, but Baileys' own `readMessages()`
+   * needs a full `WAMessageKey` (in practice: `remoteJid` + `id` +
+   * `fromMe`) to build the read-receipt request — a bare message id isn't
+   * enough on the wire. We reconstruct the missing `remoteJid` by looking
+   * up the message's own conversation/contact through the real, org-scoped
+   * data layer (`this.channels.get(channelId)` — populated by `connect()`
+   * — supplies `organizationId`, exactly like `handleIncomingMessage`
+   * above already does for `updateChannelStatus`), so this still respects
+   * context.md rule 4 ("every database query must be scoped by
+   * organization_id, no exceptions") even though the public interface
+   * signature alone doesn't carry one.
+   *
+   * Resolves without throwing whenever there's nothing to act on (no live
+   * socket, message not found, no conversation) — context.md §8.2 /
+   * src/services/messages/mark-read.ts already treat this call as
+   * best-effort and must not fail the whole "mark read" request just
+   * because the provider side of it couldn't be completed.
+   */
+  async markAsRead(channelId: string, providerMessageId: string): Promise<void> {
+    const channel = this.channels.get(channelId);
+    const sock = this.sockets.get(channelId);
+    if (!channel || !sock) return;
+
+    const message = await findMessageByProviderMessageId(channel.organizationId, providerMessageId);
+    if (!message) return;
+
+    const conversation = await getConversationWithContact(channel.organizationId, message.conversationId);
+    if (!conversation) return;
+
+    try {
+      await sock.readMessages([
+        { remoteJid: digitsToJid(conversation.contact.waId), id: providerMessageId, fromMe: false },
+      ]);
+    } catch {
+      // Best-effort — see the doc comment above; the interface's return
+      // type is `Promise<void>`, there is no result to report a failure
+      // through even if we wanted to.
+    }
   }
 
   async downloadMedia(_channelId: string, _ref: MediaReference): Promise<Buffer> {

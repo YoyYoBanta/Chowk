@@ -9,7 +9,23 @@ import type { MessageDTO } from "../../_lib/types";
  * "[Location]", etc., plus the caption/body if the adapter captured one.
  * Full rich rendering (image lightbox, video/audio players, map links,
  * "which button the customer chose") is M6/M7 — not built here.
+ *
+ * M4 addition: a tick-style status label per outbound message
+ * (PENDING/SENT/DELIVERED/READ/FAILED) — deliberately a simple text label,
+ * not a custom icon set (context.md §10.3's spirit, and this milestone's
+ * own "don't over-design this" instruction). On FAILED, always shows a
+ * clear, human-readable explanation — the adapter's own errorMessage when
+ * we have one, a generic fallback otherwise — never a bare error code
+ * alone (context.md §10.3).
  */
+const STATUS_LABELS: Record<string, string> = {
+  PENDING: "Sending...",
+  SENT: "Sent",
+  DELIVERED: "Delivered",
+  READ: "Read",
+  FAILED: "Not sent",
+};
+
 export function MessageBubble({ message }: { message: MessageDTO }) {
   const outbound = message.direction === "OUTBOUND";
 
@@ -39,11 +55,11 @@ export function MessageBubble({ message }: { message: MessageDTO }) {
         )}
         <div style={{ fontSize: "0.7em", opacity: 0.7, marginTop: "0.2rem", textAlign: "right" }}>
           {formatRelativeTime(message.metaTimestamp)}
-          {outbound ? ` · ${message.status}` : ""}
+          {outbound ? ` · ${STATUS_LABELS[message.status] ?? message.status}` : ""}
         </div>
-        {outbound && message.status === "FAILED" && message.errorMessage && (
+        {outbound && message.status === "FAILED" && (
           <div style={{ fontSize: "0.75em", color: "#ffdddd", marginTop: "0.2rem" }}>
-            {message.errorMessage}
+            Couldn&apos;t send this message — {message.errorMessage || "please try again."}
           </div>
         )}
       </div>

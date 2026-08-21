@@ -79,10 +79,9 @@ export default async function ConversationThreadPage({
             initialMessagesNewestFirst={initialMessagesNewestFirst}
             initialOlderCursor={nextCursor}
           />
-          <div style={{ borderTop: "1px solid var(--border, #e5e5e5)", padding: "0.75rem", opacity: 0.6 }}>
-            {/* Composer is M4 — no send capability yet. */}
-            <em>Sending messages arrives in a later milestone.</em>
-          </div>
+          {/* The composer (M4) now lives inside ThreadView itself, below its
+              scroll container — it owns the message list state that
+              optimistic-send reconciliation needs to mutate directly. */}
         </div>
         <ContactPanel conversation={conversationDTO} />
       </div>

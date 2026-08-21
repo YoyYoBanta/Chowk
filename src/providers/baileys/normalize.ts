@@ -1,9 +1,16 @@
-import { getContentType, toNumber, type WAMessage } from "@whiskeysockets/baileys";
+import {
+  getContentType,
+  toNumber,
+  WAMessageStatus,
+  type WAMessage,
+  type WAMessageUpdate,
+} from "@whiskeysockets/baileys";
 import type {
   InteractivePayload,
   MediaReference,
   MessageType,
   NormalizedInboundEvent,
+  NormalizedStatusEvent,
 } from "../types";
 
 /**
@@ -23,6 +30,15 @@ import type {
  * NormalizedInboundEvent.from's contract. */
 export function jidToDigits(jid: string): string {
   return jid.split("@")[0]?.split(":")[0]?.replace(/\D/g, "") ?? "";
+}
+
+/** The inverse of jidToDigits — builds the standard individual-chat JID
+ * `sock.sendMessage()`/`sock.readMessages()` expect (verified against the
+ * real `messages-send.d.ts`/`chats.d.ts` signatures, see adapter.ts's doc
+ * comment). WhatsApp Groups (`@g.us`) are out of scope for Tier 1
+ * (context.md §2.2), so this always produces an individual-chat jid. */
+export function digitsToJid(digits: string): string {
+  return `${digits}@s.whatsapp.net`;
 }
 
 interface BaileysMediaContent {
@@ -150,4 +166,75 @@ export function normalizeBaileysMessage(
     interactive,
     raw: msg,
   };
+}
+
+/**
+ * Baileys' real ack-status enum, imported as `WAMessageStatus` — the
+ * package's own top-level, intentionally-public alias for
+ * `proto.WebMessageInfo.Status` (see `export declare const WAMessageStatus:
+ * typeof proto.WebMessageInfo.Status` in the package's own
+ * `lib/Types/Message.d.ts`, re-exported from its root `index.d.ts`).
+ * Verified directly against that generated `.d.ts`, not guessed: `ERROR = 0,
+ * PENDING = 1, SERVER_ACK = 2, DELIVERY_ACK = 3, READ = 4, PLAYED = 5`.
+ * Mapped onto our four-value `NormalizedStatusEvent` status (context.md
+ * §8.0.2 — modelled on Meta's semantics, not Baileys').
+ *
+ * `PENDING` (1) has no mapping on purpose — it precedes our own
+ * PENDING -> SENT transition and carries no information our own status
+ * progression (src/lib/messages/status-progression.ts) doesn't already
+ * have from the moment `sendText()`'s own result is applied. `PLAYED` (a
+ * voice-note-specific ack, stronger than `READ`) maps to our `READ` —
+ * forward-only application makes a `READ` arriving after an equal or
+ * later `READ` a safe no-op either way.
+ */
+const ACK_TO_STATUS: Partial<Record<number, NormalizedStatusEvent["status"]>> = {
+  [WAMessageStatus.SERVER_ACK]: "SENT",
+  [WAMessageStatus.DELIVERY_ACK]: "DELIVERED",
+  [WAMessageStatus.READ]: "READ",
+  [WAMessageStatus.PLAYED]: "READ",
+  [WAMessageStatus.ERROR]: "FAILED",
+};
+
+/**
+ * Pure Baileys `messages.update` -> `NormalizedStatusEvent` mapping (the
+ * status-update counterpart to `normalizeBaileysMessage` above), kept in
+ * this dependency-free module for the same reason: zero network/DB
+ * dependency, directly unit-testable (see normalize.test.ts).
+ *
+ * Returns null for an update that doesn't carry an ack-status change at
+ * all (Baileys' `messages.update` also fires for edits, reactions, etc. —
+ * `update.update` is a `Partial<WAMessage>`, and most fields on it are
+ * irrelevant to us) or one whose key has no usable message id.
+ */
+export function normalizeBaileysStatusUpdate(
+  channelId: string,
+  update: WAMessageUpdate,
+): NormalizedStatusEvent | null {
+  const providerMessageId = update.key.id;
+  if (!providerMessageId) return null;
+
+  const ackStatus = update.update.status;
+  if (ackStatus == null) return null;
+
+  const status = ACK_TO_STATUS[ackStatus];
+  if (!status) return null;
+
+  const event: NormalizedStatusEvent = {
+    channelId,
+    providerMessageId,
+    status,
+    timestamp: new Date(),
+  };
+
+  if (status === "FAILED") {
+    // Baileys' messages.update carries only the numeric ack status, not a
+    // granular per-message failure reason the way Meta's structured error
+    // codes do (context.md §4.7) — flagged in TODO-VERIFY.md. A generic,
+    // honest code/message is what we actually know here; never invent a
+    // more specific one (context.md rule 2).
+    event.errorCode = "BAILEYS_SEND_ERROR";
+    event.errorMessage = "WhatsApp reported that this message failed to send.";
+  }
+
+  return event;
 }

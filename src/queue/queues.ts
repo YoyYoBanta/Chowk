@@ -1,11 +1,13 @@
 import { Queue } from "bullmq";
 import { redisConnection } from "./connection";
-import type { NormalizedInboundEvent } from "@/providers/types";
+import type { NormalizedInboundEvent, NormalizedStatusEvent } from "@/providers/types";
 
 /** Queue name constants — the single source of truth both the producer
  * (provider adapters) and consumer (src/worker/consumers/) sides reference. */
 export const QUEUE_NAMES = {
   ingestInbound: "ingest-inbound",
+  sendMessage: "send-message",
+  statusUpdate: "status-update",
 } as const;
 
 /**
@@ -47,4 +49,87 @@ export function getIngestInboundQueue(): Queue<IngestInboundJobData> {
     });
   }
   return ingestInboundQueue;
+}
+
+/**
+ * M4 additions below: `send-message` and `status-update` (architecture.md
+ * §13's queue table). Same lazy-construction pattern as ingestInboundQueue
+ * above, for the identical reason — this module is reachable from the fast
+ * Vitest suite's module graph, which must do zero network I/O on import.
+ */
+
+/**
+ * Job payload for the send-message queue: only the message's id
+ * (architecture.md §7/§13 — "never carries the payload itself, so retries
+ * always read current DB state"), plus `organizationId` so the consumer's
+ * DB lookup can stay organizationId-first with zero exceptions — the exact
+ * same precedent `IngestInboundJobData` set (see its doc comment above):
+ * the caller that enqueues (src/services/messages/send-message.ts) already
+ * has `organizationId` in hand from the authenticated request, so this
+ * costs no extra lookup and means the consumer never has to resolve
+ * organizationId from a bare messageId via an unscoped query.
+ */
+export interface SendMessageJobData {
+  organizationId: string;
+  messageId: string;
+}
+
+let sendMessageQueue: Queue<SendMessageJobData> | undefined;
+
+export function getSendMessageQueue(): Queue<SendMessageJobData> {
+  if (!sendMessageQueue) {
+    sendMessageQueue = new Queue<SendMessageJobData>(QUEUE_NAMES.sendMessage, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        // Exponential backoff for retryable send failures (architecture.md
+        // §7/§13: "let BullMQ retry with exponential backoff... configure
+        // this on the queue/job, not by manually re-enqueueing"). The
+        // send-message consumer only ever THROWS for a retryable
+        // `SendResult` — a terminal one resolves normally (job "succeeds"
+        // from BullMQ's point of view, having already written FAILED to
+        // the DB itself), so this config only ever engages for genuinely
+        // retryable failures.
+        attempts: 5,
+        backoff: { type: "exponential", delay: 2_000 },
+      },
+    });
+  }
+  return sendMessageQueue;
+}
+
+/**
+ * Job payload for the status-update queue: wraps `NormalizedStatusEvent`
+ * (src/providers/types.ts) the same way `IngestInboundJobData` wraps
+ * `NormalizedInboundEvent` — that interface shape isn't ours to change
+ * (context.md §8.0.2), so `organizationId` and `provider` are added here at
+ * the queue-payload level, supplied by the adapter from the `Channel` row
+ * it already holds. Judgment call, flagged in TODO-VERIFY.md: this mirrors
+ * the exact precedent `IngestInboundJobData` set at M2 for the identical
+ * reason (keep src/data/*.ts organizationId-first with zero "resolve org
+ * from a bare id" exceptions).
+ */
+export interface StatusUpdateJobData {
+  organizationId: string;
+  provider: "baileys" | "cloud-api";
+  event: NormalizedStatusEvent;
+}
+
+let statusUpdateQueue: Queue<StatusUpdateJobData> | undefined;
+
+export function getStatusUpdateQueue(): Queue<StatusUpdateJobData> {
+  if (!statusUpdateQueue) {
+    statusUpdateQueue = new Queue<StatusUpdateJobData>(QUEUE_NAMES.statusUpdate, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        // Bounded retry only (architecture.md §10: "a short retry is
+        // acceptable, infinite retry is not") — covers the narrow, real
+        // race where a status event arrives before send-message.consumer.ts
+        // has finished persisting providerMessageId, without retrying
+        // forever on a message that will never exist under this id.
+        attempts: 5,
+        backoff: { type: "exponential", delay: 1_000 },
+      },
+    });
+  }
+  return statusUpdateQueue;
 }
