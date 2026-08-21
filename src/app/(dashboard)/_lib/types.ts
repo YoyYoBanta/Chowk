@@ -13,6 +13,10 @@ export interface ConversationListItemDTO {
   unreadCount: number;
   lastMessageAt: string | null;
   lastInboundAt: string | null;
+  /** M5: server-computed (src/services/window.ts) — true when this
+   * conversation's 24h window closes in under 2 hours. Never re-derived
+   * client-side from lastInboundAt. */
+  isClosingSoon: boolean;
   contact: {
     id: string;
     name: string | null;
@@ -61,6 +65,14 @@ export interface ConversationDetailDTO {
   unreadCount: number;
   lastMessageAt: string | null;
   lastInboundAt: string | null;
+  /** M5, all server-computed (src/services/window.ts) from the real
+   * lastInboundAt on every request — never cached, never re-derived
+   * client-side. The composer's open/closed state is driven entirely by
+   * `isWindowOpen`; `closesAt`/`remainingMs` are only for display (the
+   * countdown text). */
+  isWindowOpen: boolean;
+  closesAt: string | null;
+  remainingMs: number | null;
   channel: { id: string; displayName: string; provider: string };
   contact: {
     id: string;

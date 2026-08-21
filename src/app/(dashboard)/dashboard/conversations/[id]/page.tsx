@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth/guard";
 import { getConversationWithContact } from "@/data/conversations";
 import { listMessagesPage } from "@/data/messages";
+import { getWindowState } from "@/services/window";
 import { ThreadView } from "../../_components/thread-view";
 import { ContactPanel } from "../../_components/contact-panel";
 import type { ConversationDetailDTO, MessageDTO } from "../../../_lib/types";
@@ -31,12 +32,17 @@ export default async function ConversationThreadPage({
     limit: 30,
   });
 
+  const windowState = getWindowState(conversation.lastInboundAt);
+
   const conversationDTO: ConversationDetailDTO = {
     id: conversation.id,
     status: conversation.status,
     unreadCount: conversation.unreadCount,
     lastMessageAt: conversation.lastMessageAt ? conversation.lastMessageAt.toISOString() : null,
     lastInboundAt: conversation.lastInboundAt ? conversation.lastInboundAt.toISOString() : null,
+    isWindowOpen: windowState.isOpen,
+    closesAt: windowState.closesAt ? windowState.closesAt.toISOString() : null,
+    remainingMs: windowState.remainingMs,
     channel: conversation.channel,
     contact: {
       id: conversation.contact.id,
@@ -78,6 +84,8 @@ export default async function ConversationThreadPage({
             conversationId={conversationDTO.id}
             initialMessagesNewestFirst={initialMessagesNewestFirst}
             initialOlderCursor={nextCursor}
+            initialIsWindowOpen={conversationDTO.isWindowOpen}
+            initialClosesAt={conversationDTO.closesAt}
           />
           {/* The composer (M4) now lives inside ThreadView itself, below its
               scroll container — it owns the message list state that

@@ -7,6 +7,7 @@ import { Composer } from "./composer";
 import type {
   MessageDTO,
   ConversationRealtimeEvent,
+  ConversationDetailResponse,
   MessagesPageResponse,
 } from "../../_lib/types";
 
@@ -41,20 +42,38 @@ import type {
  * like `message.created` and appended. A reconnect (architecture.md §11)
  * instead re-fetches the latest page and merges by id, since some events
  * may have been missed while disconnected.
+ *
+ * M5: the composer's window state is server-computed at page-load time
+ * (`initialIsWindowOpen`/`initialClosesAt`, from
+ * src/app/(dashboard)/dashboard/conversations/[id]/page.tsx via
+ * src/services/window.ts) and kept in local state here rather than ever
+ * re-derived client-side. A fresh INBOUND message can reopen or extend the
+ * window, so a live `message.created` event for an inbound message
+ * triggers a re-fetch of `GET /api/conversations/:id` to pick up the new
+ * server-computed state — still server truth, just re-asked-for rather
+ * than recomputed locally from a raw timestamp.
  */
 export function ThreadView({
   conversationId,
   initialMessagesNewestFirst,
   initialOlderCursor,
+  initialIsWindowOpen,
+  initialClosesAt,
 }: {
   conversationId: string;
   initialMessagesNewestFirst: MessageDTO[];
   initialOlderCursor: string | null;
+  initialIsWindowOpen: boolean;
+  initialClosesAt: string | null;
 }) {
   // Always kept oldest → newest for rendering top-to-bottom.
   const [messages, setMessages] = useState<MessageDTO[]>(
     () => [...initialMessagesNewestFirst].reverse(),
   );
+  const [windowState, setWindowState] = useState({
+    isWindowOpen: initialIsWindowOpen,
+    closesAt: initialClosesAt,
+  });
   const [olderCursor, setOlderCursor] = useState(initialOlderCursor);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -155,6 +174,24 @@ export function ThreadView({
       });
   }, [conversationId, mergeById]);
 
+  // M5: a fresh inbound message can reopen/extend the 24h window — refetch
+  // the conversation detail route (server-computed, src/services/window.ts)
+  // rather than ever re-deriving window state from a client-side timestamp.
+  const refetchWindowState = useCallback(() => {
+    void fetch(`/api/conversations/${conversationId}`, { credentials: "same-origin" })
+      .then((res) => (res.ok ? (res.json() as Promise<ConversationDetailResponse>) : null))
+      .then((data) => {
+        if (!data) return;
+        setWindowState({
+          isWindowOpen: data.conversation.isWindowOpen,
+          closesAt: data.conversation.closesAt,
+        });
+      })
+      .catch(() => {
+        /* best-effort — the composer keeps its last known-good state */
+      });
+  }, [conversationId]);
+
   const handleEvent = useCallback(
     (raw: string) => {
       let parsed: ConversationRealtimeEvent | null = null;
@@ -168,6 +205,7 @@ export function ThreadView({
       if (parsed.type === "message.created") {
         setMessages((prev) => mergeById(prev, [parsed.message]));
         requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }));
+        if (parsed.message.direction === "INBOUND") refetchWindowState();
         return;
       }
 
@@ -185,10 +223,18 @@ export function ThreadView({
         });
       }
     },
-    [conversationId, mergeById],
+    [conversationId, mergeById, refetchWindowState],
   );
 
-  useRealtimeEvents(handleEvent, refetchLatest);
+  // On reconnect, re-sync both the message list and the window state — some
+  // inbound events (and the window-affecting ones among them) may have been
+  // missed while disconnected (architecture.md §11).
+  const onReconnect = useCallback(() => {
+    refetchLatest();
+    refetchWindowState();
+  }, [refetchLatest, refetchWindowState]);
+
+  useRealtimeEvents(handleEvent, onReconnect);
 
   // Optimistic-send reconciliation (M4) — see composer.tsx's own doc
   // comment for the full story. These three callbacks are the only place
@@ -229,6 +275,8 @@ export function ThreadView({
       </div>
       <Composer
         conversationId={conversationId}
+        isWindowOpen={windowState.isWindowOpen}
+        closesAt={windowState.closesAt}
         onOptimisticAdd={addOptimisticMessage}
         onServerAck={reconcileOptimisticMessage}
         onFailed={markOptimisticMessageFailed}

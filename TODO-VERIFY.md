@@ -586,3 +586,42 @@ unrelated to M4's own application logic:**
   verification loop re-run clean after this change (`tsc`, `vitest`,
   `test:integration`, `build`, `eslint` all green — see PROGRESS.md's M4
   section for the exact counts).
+
+## M5 — The 24-hour window
+
+Genuinely small this time — this milestone's own brief is correct that it's
+mostly pure date-math and fully exercisable without a live number. Two
+judgment calls worth recording (neither is a live-phone gap):
+
+- **`src/providers/baileys/simulate-window.ts`'s `checkWindowOpenForSend`
+  fails OPEN (`null` — proceed with the send) when there's no known
+  `Contact`/`Conversation` for the `(channelId, to)` pair at all**, rather
+  than treating "we can't determine the window state" as itself a
+  rejection. Reasoning: in this system a send always originates from an
+  existing conversationId at the service layer (which independently
+  enforces the window against that same conversation's own row), so the
+  adapter-layer check only ever has "nothing to check against" for a
+  hypothetical future caller reaching `sendText`/`sendMedia` with a
+  brand-new `to` that has no conversation history yet — there's no
+  `lastInboundAt` to compare against, so nothing to enforce, and refusing
+  to send here would just add friction for the service layer having
+  already made the real decision. Worth revisiting if the adapter is ever
+  called somewhere that doesn't guarantee this.
+- **`sendText()`/`sendMedia()` check the window BEFORE the "is there a live
+  socket at all" check**, so a channel with both a closed window and no
+  live socket returns `WINDOW_CLOSED` (terminal) rather than
+  `NO_ACTIVE_SESSION` (retryable). This was a deliberate ordering choice
+  (a closed window is definitive, known-terminal information; "no socket
+  yet" is a transient state that might resolve on its own) but was never
+  observable against a real mixed failure mode (window closed AND
+  reconnecting) since there's no live session yet — worth confirming this
+  priority is still the right one once real connection-flakiness patterns
+  are observed.
+
+No other uncertainty flagged — the window-math boundary cases
+(`src/services/window.ts`) are pure, fully unit-tested, and the send-
+pipeline's structured-rejection-with-zero-rows-created behavior was
+verified for real against Postgres (`src/services/messages/
+send-message.window.integration.test.ts`), including a real HTTP request
+through the exported route handler — see PROGRESS.md's M5 section for the
+full list of what was actually run and the real output it produced.

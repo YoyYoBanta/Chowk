@@ -1,11 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireApiSession } from "@/lib/auth/guard";
 import { getConversationWithContact } from "@/data/conversations";
+import { getWindowState } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
- * GET /api/conversations/:id — detail: the conversation + its contact.
- * Computed 24h-window state is M5, not built here.
+ * GET /api/conversations/:id — detail: the conversation + its contact,
+ * plus the computed 24h service-window state (M5 — context.md §4.1/§10.4).
+ * `isWindowOpen`/`closesAt`/`remainingMs` are derived fresh on every
+ * request from the real `lastInboundAt` via `src/services/window.ts` — the
+ * one place that comparison is computed — never stored or cached. The
+ * composer's open/closed state is driven entirely by this server-computed
+ * value, never by the client re-deriving it from a possibly-stale
+ * timestamp.
  *
  * Tenancy boundary: `getConversationWithContact` scopes its lookup by
  * `organizationId` from the session, so a conversation id belonging to
@@ -33,8 +40,17 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    const windowState = getWindowState(conversation.lastInboundAt);
+
     logger.info("request end", { organizationId, correlationId, route, conversationId, statusCode: 200 });
-    return NextResponse.json({ conversation });
+    return NextResponse.json({
+      conversation: {
+        ...conversation,
+        isWindowOpen: windowState.isOpen,
+        closesAt: windowState.closesAt,
+        remainingMs: windowState.remainingMs,
+      },
+    });
   } catch (error) {
     logger.error("request failed", {
       organizationId,

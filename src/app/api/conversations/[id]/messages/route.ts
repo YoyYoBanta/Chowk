@@ -96,9 +96,16 @@ export async function GET(
  * unknown keys by default), never half-interpreted as a media/template
  * send.
  *
- * No 24-hour window enforcement here (M5) — every send proceeds
- * regardless of window state this milestone, per this milestone's own
- * explicit non-goals.
+ * 24-hour window enforcement (M5): `sendTextMessage` itself checks the
+ * window BEFORE creating any row (src/services/window.ts /
+ * src/services/messages/send-message.ts's own doc comment) and returns a
+ * structured rejection rather than throwing. This route only translates
+ * that into the actual HTTP response — a window-closed send comes back as
+ * a real `409` with `{ error, code: "WINDOW_CLOSED" }`, so a direct API
+ * call (not just the UI) is rejected exactly the same way the UI's own
+ * disabled composer state prevents in the first place (context.md's M5
+ * done-criterion: "a direct API call bypassing the UI is rejected with a
+ * structured error").
  *
  * Returns 202 (accepted, not yet delivered) with the PENDING message row —
  * matching architecture.md §7's sequence diagram exactly ("Svc-->>API: 202
@@ -163,8 +170,12 @@ export async function POST(
         route,
         conversationId,
         statusCode: result.status,
+        ...("code" in result ? { errorCode: result.code } : {}),
       });
-      return NextResponse.json({ error: result.error }, { status: result.status });
+      return NextResponse.json(
+        { error: result.error, ...("code" in result ? { code: result.code } : {}) },
+        { status: result.status },
+      );
     }
 
     logger.info("request end", {

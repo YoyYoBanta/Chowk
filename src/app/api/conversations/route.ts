@@ -3,6 +3,7 @@ import { requireApiSession } from "@/lib/auth/guard";
 import { listConversationsPage } from "@/data/conversations";
 import { decodeCursor, paginationQuerySchema, type PaginationQuery } from "@/lib/validation/pagination";
 import { messagePreviewText } from "@/lib/messages/render";
+import { getWindowState } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 import type { ConversationCursor } from "@/data/conversations";
 
@@ -11,6 +12,12 @@ import type { ConversationCursor } from "@/data/conversations";
  * most-recent-first (context.md §9). Filters (status/assignedTo/channelId/
  * tag/search) are M8/M9 — not built here. `organizationId` comes only from
  * the session (architecture.md §12) — never a query param.
+ *
+ * M5 addition: each row carries a server-computed `isClosingSoon` boolean
+ * (context.md §10.2 — "a subtle indicator when a conversation's 24-hour
+ * window is closing soon, under 2 hours") derived from `lastInboundAt` via
+ * `src/services/window.ts`'s `getWindowState` — computed here, not
+ * re-derived client-side from the raw timestamp also present on the row.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const correlationId = newCorrelationId();
@@ -57,6 +64,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         unreadCount: conversation.unreadCount,
         lastMessageAt: conversation.lastMessageAt,
         lastInboundAt: conversation.lastInboundAt,
+        isClosingSoon: getWindowState(conversation.lastInboundAt).isClosingSoon,
         contact: {
           id: conversation.contact.id,
           name: conversation.contact.name,

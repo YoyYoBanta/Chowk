@@ -51,6 +51,25 @@ export async function getConversationById(
   });
 }
 
+/**
+ * M5 addition: looks a conversation up by the same `(channelId, contactId)`
+ * pair `upsertConversationForInbound` upserts on, via the real
+ * `@@unique([channelId, contactId])` constraint. This is what
+ * src/providers/baileys/simulate-window.ts needs — the Baileys adapter's
+ * `sendText`/`sendMedia` only receive a `to` (digits) and `channelId`, not a
+ * conversationId, so it has to resolve the conversation the same way an
+ * inbound event would have upserted it in the first place.
+ */
+export async function getConversationByChannelAndContact(
+  organizationId: string,
+  channelId: string,
+  contactId: string,
+): Promise<Conversation | null> {
+  return prisma.conversation.findFirst({
+    where: { organizationId, channelId, contactId },
+  });
+}
+
 export async function listConversationsInOrg(organizationId: string): Promise<Conversation[]> {
   return prisma.conversation.findMany({
     where: { organizationId },
@@ -156,7 +175,9 @@ export async function resetUnreadCount(
 }
 
 /** Conversation + contact, for `GET /api/conversations/:id` (detail view).
- * Computed 24h-window state is deliberately NOT included — that's M5. */
+ * Returns the raw row only — computed 24h-window state (M5) is derived from
+ * `lastInboundAt` by the route/page that calls this, via
+ * `src/services/window.ts`, never stored or cached here. */
 export async function getConversationWithContact(
   organizationId: string,
   conversationId: string,

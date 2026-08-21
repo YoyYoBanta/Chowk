@@ -3,20 +3,32 @@ import { getConversationById } from "@/data/conversations";
 import { createPendingOutboundMessage } from "@/data/messages";
 import { getSendMessageQueue, QUEUE_NAMES } from "@/queue/queues";
 import { getWhatsAppProvider } from "@/providers/factory";
+import { isWindowOpen } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
  * The outbound-send sequence (architecture.md §7 / context.md §8.2):
  *
  *   1. verify the conversation belongs to the caller's organizationId
- *   2. insert the Message row, status PENDING — BEFORE anything else
- *   3. enqueue a send-message job carrying only the message's id
- *   4. return the PENDING row
+ *   2. (M5) confirm the 24-hour service window is open — reject BEFORE
+ *      anything else if it's closed
+ *   3. insert the Message row, status PENDING — BEFORE anything else
+ *   4. enqueue a send-message job carrying only the message's id
+ *   5. return the PENDING row
  *
- * No 24-hour window check here on purpose (M5's job — context.md build
- * order is explicit that Tier 1 enforces this itself even though Baileys
- * doesn't need it, but this milestone's own brief says not to even stub
- * it). All sends proceed regardless of window state for now.
+ * The window check (M5, context.md §4.1/§8.2 step 2: "if the message is
+ * free-form, confirm the 24-hour window is open... do not rely on the
+ * client to enforce this") happens BEFORE the PENDING insert/enqueue on
+ * purpose: a window-closed rejection must leave no `Message` row at all —
+ * it's not a failed send (which does get a PENDING-then-FAILED row), it's a
+ * send that never happened. `isWindowOpen` (src/services/window.ts) is the
+ * one place that comparison is computed; this function only calls it.
+ *
+ * `opts.skipWindowCheck` exists so a future template-send call site (M7 —
+ * templates are the one thing Meta allows outside the window) can reuse
+ * this same function's PENDING-insert/enqueue plumbing without the
+ * free-form check applying to it. No caller in this milestone passes
+ * `true` — every text send enforces the window.
  *
  * Why the PENDING insert happens first, and why that's the actual point of
  * this milestone (architecture.md §7): "if the Worker process dies
@@ -45,11 +57,20 @@ export interface SendTextMessageInput {
 
 export type SendMessageResult =
   | { ok: true; message: Message }
-  | { ok: false; status: 404; error: string };
+  | { ok: false; status: 404; error: string }
+  | { ok: false; status: 409; code: "WINDOW_CLOSED"; error: string };
+
+export interface SendTextMessageOpts {
+  correlationId?: string;
+  /** Skips the 24h window check entirely — see the doc comment above. No
+   * caller in this milestone sets this; it exists for a future
+   * template-send call site (M7). */
+  skipWindowCheck?: boolean;
+}
 
 export async function sendTextMessage(
   input: SendTextMessageInput,
-  opts: { correlationId?: string } = {},
+  opts: SendTextMessageOpts = {},
 ): Promise<SendMessageResult> {
   const { organizationId, conversationId, userId, body } = input;
   const correlationId = opts.correlationId ?? newCorrelationId();
@@ -71,7 +92,25 @@ export async function sendTextMessage(
     return { ok: false, status: 404, error: "Conversation not found" };
   }
 
-  // Step 2: PENDING row, before anything else — see the doc comment above.
+  // Step 2 (M5): the window check, BEFORE the PENDING insert/enqueue below
+  // — see this file's own doc comment for why a window-closed rejection
+  // must never create a Message row at all.
+  if (!opts.skipWindowCheck && !isWindowOpen(conversation.lastInboundAt)) {
+    logger.info("send-message: rejected, 24h service window closed", {
+      organizationId,
+      correlationId,
+      conversationId,
+    });
+    return {
+      ok: false,
+      status: 409,
+      code: "WINDOW_CLOSED",
+      error:
+        "The 24-hour reply window has closed for this conversation. Send an approved template message to reopen it.",
+    };
+  }
+
+  // Step 3: PENDING row, before anything else — see the doc comment above.
   const message = await createPendingOutboundMessage(organizationId, {
     conversationId,
     // Tags the row with whichever transport is actually configured to send
@@ -83,7 +122,7 @@ export async function sendTextMessage(
     sentByUserId: userId,
   });
 
-  // Step 3: enqueue, id-only payload.
+  // Step 4: enqueue, id-only payload.
   await getSendMessageQueue().add(QUEUE_NAMES.sendMessage, {
     organizationId,
     messageId: message.id,

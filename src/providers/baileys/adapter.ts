@@ -13,6 +13,7 @@ import { getConversationWithContact } from "@/data/conversations";
 import { getIngestInboundQueue, getStatusUpdateQueue, QUEUE_NAMES } from "@/queue/queues";
 import { createDbAuthState } from "./session-store";
 import { digitsToJid, normalizeBaileysMessage, normalizeBaileysStatusUpdate } from "./normalize";
+import { checkWindowOpenForSend } from "./simulate-window";
 import type {
   ConnectionState,
   MediaReference,
@@ -43,7 +44,7 @@ import type {
  *    normalize every real Baileys inbound-message event into
  *    NormalizedInboundEvent, pushed onto the real ingest-inbound BullMQ
  *    queue.
- *  - sendText()/markAsRead() (M4, this milestone) are REAL: real
+ *  - sendText()/markAsRead() (M4) are REAL: real
  *    `sock.sendMessage(jid, { text })` / `sock.readMessages([key])` calls
  *    (see their own doc comments below for exactly how the real method
  *    signatures were confirmed against the package's own `.d.ts`), and the
@@ -51,11 +52,18 @@ import type {
  *    onto the real status-update BullMQ queue via the same
  *    `onStatusUpdate(handler)` registration point the interface already
  *    defined at M2.
+ *  - sendText()/sendMedia() (M5, this milestone) additionally simulate
+ *    Meta's 24-hour service window independently of the service layer
+ *    (context.md §8.0.4 — see ./simulate-window.ts's own doc comment for
+ *    why this is intentional defense-in-depth, not a duplicate check to
+ *    remove): both return `{ ok: false, retryable: false, code:
+ *    'WINDOW_CLOSED' }` when called for a conversation whose window is
+ *    closed, before ever touching the socket.
  *  - sendMedia/sendTemplate/downloadMedia/uploadMedia/listTemplates/
- *    createTemplate remain STUBS — explicitly out of scope until M6
- *    (media) / M7 (templates), including the Meta-parity simulation work
- *    (window check, template rendering, rate limiting) context.md §8.0.4
- *    describes for this adapter, none of which is this milestone's job.
+ *    createTemplate remain otherwise STUBS — explicitly out of scope until
+ *    M6 (media) / M7 (templates); sendMedia's window-check guard is the one
+ *    piece of M6/M7's simulation work built this milestone, so the pattern
+ *    is consistent for M6 to build the rest of its body on.
  *
  * connect() (and, as of M4, sendText()/markAsRead()/the messages.update
  * wiring) is code-complete but UNVERIFIED against a real WhatsApp session
@@ -69,7 +77,7 @@ import type {
  * judgment calls (e.g. "no active session" -> retryable vs terminal) were
  * made in the absence of a live session to observe.
  */
-class BaileysProvider implements WhatsAppProvider {
+export class BaileysProvider implements WhatsAppProvider {
   readonly name = "baileys" as const;
 
   private readonly sockets = new Map<string, WASocket>();
@@ -82,6 +90,23 @@ class BaileysProvider implements WhatsAppProvider {
   async connect(channel: Channel): Promise<void> {
     this.channels.set(channel.id, channel);
     await this.startSocket(channel);
+  }
+
+  /**
+   * Test-support only — never called by production code. Mirrors
+   * src/lib/auth/session.ts's `sealSessionCookie` precedent: a small,
+   * explicit hook that lets a test populate exactly the state a real code
+   * path depends on (here, the `channelId -> organizationId` map
+   * `sendText`/`sendMedia`'s window-check needs — see markAsRead's own doc
+   * comment for why the adapter resolves organizationId this way) without
+   * driving `connect()`'s real, network-dependent socket setup. There is
+   * still no dedicated WhatsApp test number available (TODO-VERIFY.md), so
+   * this is what lets the window-check branch be exercised directly against
+   * the real `sendText()`/`sendMedia()` methods rather than only through
+   * ./simulate-window.ts's standalone helper.
+   */
+  registerChannelForTest(channel: Channel): void {
+    this.channels.set(channel.id, channel);
   }
 
   private async startSocket(channel: Channel): Promise<void> {
@@ -257,8 +282,21 @@ class BaileysProvider implements WhatsAppProvider {
    * argues for the safer default here: BullMQ's own bounded retry/backoff
    * (src/queue/queues.ts) still eventually resolves to FAILED via
    * markSendMessageJobExhausted if the condition doesn't clear.
+   *
+   * M5: the 24h-window check (./simulate-window.ts) runs FIRST, before
+   * even the "no active socket" check — a window-closed send is terminal
+   * (`retryable: false`) regardless of the socket's state, and this
+   * ordering is what lets the window-check branch be tested directly
+   * without needing a live socket at all (registerChannelForTest + a
+   * closed-window conversation is enough). Only proceeds to the socket
+   * lookup once the window has confirmed open (or there's nothing in our
+   * own DB to check it against — see checkWindowOpenForSend's own doc
+   * comment for that fail-open case).
    */
   async sendText(p: SendTextParams): Promise<SendResult> {
+    const windowRejection = await this.checkWindow(p.channelId, p.to);
+    if (windowRejection) return windowRejection;
+
     const sock = this.sockets.get(p.channelId);
     if (!sock) {
       return {
@@ -291,13 +329,35 @@ class BaileysProvider implements WhatsAppProvider {
     }
   }
 
-  async sendMedia(_p: SendMediaParams): Promise<SendResult> {
+  /**
+   * Body remains a stub (M6) — media send itself is out of scope this
+   * milestone. The window-check guard is added now (M5) so the pattern
+   * (check window first, same as sendText) is already in place for M6 to
+   * build the real body on top of, rather than something M6 has to
+   * remember to retrofit.
+   */
+  async sendMedia(p: SendMediaParams): Promise<SendResult> {
+    const windowRejection = await this.checkWindow(p.channelId, p.to);
+    if (windowRejection) return windowRejection;
+
     return {
       ok: false,
       retryable: false,
       code: "NOT_IMPLEMENTED",
       message: "baileys: sendMedia() lands in M4/M6",
     };
+  }
+
+  /** Shared by sendText/sendMedia — see checkWindowOpenForSend's own doc
+   * comment (./simulate-window.ts) for the full story. Resolves
+   * organizationId from the in-memory channels map populated by connect()
+   * (or registerChannelForTest in tests), the same precedent markAsRead
+   * already established. No channel known at all -> nothing to check,
+   * fall through exactly like markAsRead's own "not found" cases do. */
+  private async checkWindow(channelId: string, toWaId: string): Promise<SendResult | null> {
+    const channel = this.channels.get(channelId);
+    if (!channel) return null;
+    return checkWindowOpenForSend(channel.organizationId, channelId, toWaId);
   }
 
   async sendTemplate(_p: SendTemplateParams): Promise<SendResult> {

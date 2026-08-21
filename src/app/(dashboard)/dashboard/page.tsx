@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth/guard";
 import { listConversationsPage } from "@/data/conversations";
 import { messagePreviewText } from "@/lib/messages/render";
+import { getWindowState } from "@/services/window";
 import { logoutAction } from "./logout-action";
 import { ConversationList } from "./_components/conversation-list";
 import type { ConversationListItemDTO } from "../_lib/types";
@@ -22,6 +23,7 @@ export default async function DashboardHome() {
       unreadCount: conversation.unreadCount,
       lastMessageAt: conversation.lastMessageAt ? conversation.lastMessageAt.toISOString() : null,
       lastInboundAt: conversation.lastInboundAt ? conversation.lastInboundAt.toISOString() : null,
+      isClosingSoon: getWindowState(conversation.lastInboundAt).isClosingSoon,
       contact: {
         id: conversation.contact.id,
         name: conversation.contact.name,

@@ -12,10 +12,17 @@ import type {
 
 /**
  * Conversation list (context.md §10.2): contact name/number, last message
- * preview, relative timestamp, unread badge, channel indicator. Assignment/
- * avatar is explicitly out of scope (M8); filters (All/Unassigned/Mine/
- * Done/channel/tag/search) are M8/M9 — this renders every conversation in
- * the org, most-recent-first, with a manual "load more" for older pages.
+ * preview, relative timestamp, unread badge, channel indicator, and (M5) a
+ * subtle closing-soon indicator. Assignment/avatar is explicitly out of
+ * scope (M8); filters (All/Unassigned/Mine/Done/channel/tag/search) are
+ * M8/M9 — this renders every conversation in the org, most-recent-first,
+ * with a manual "load more" for older pages.
+ *
+ * M5: `conversation.isClosingSoon` is server-computed
+ * (src/app/api/conversations/route.ts / src/services/window.ts) — true
+ * when the conversation's 24h window closes in under 2 hours. Rendered as
+ * a small clock badge next to the contact name; never recomputed here from
+ * `lastInboundAt` directly.
  *
  * Realtime: subscribes to `/api/events` via `useRealtimeEvents`. A live
  * `message.created` event just re-fetches page one and replaces the list
@@ -106,6 +113,16 @@ export function ConversationList({
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: conversation.unreadCount > 0 ? 700 : 400 }}>
                   {conversation.contact.displayName ?? conversation.contact.name ?? conversation.contact.waId}
+                  {conversation.isClosingSoon && (
+                    <span
+                      role="img"
+                      aria-label="Reply window closing soon"
+                      title="Reply window closing soon"
+                      style={{ marginLeft: "0.4rem", fontSize: "0.8em" }}
+                    >
+                      ⏰
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: "0.85em", opacity: 0.75, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {conversation.lastMessageDirection === "OUTBOUND" ? "You: " : ""}
