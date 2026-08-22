@@ -46,6 +46,7 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
 
   const [fieldDefs, setFieldDefs] = useState<CustomFieldDefDTO[]>([]);
   const [customFields, setCustomFields] = useState<Record<string, unknown>>(contact.customFields ?? {});
+  const [customFieldError, setCustomFieldError] = useState<string | null>(null);
 
   const [users, setUsers] = useState<UserDTO[]>([]);
   const [assignedUserId, setAssignedUserId] = useState<string | null>(conversation.assignedUserId);
@@ -144,13 +145,28 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
   };
 
   const handleCustomFieldChange = async (key: string, value: string) => {
+    const previous = customFields;
     const next = { ...customFields, [key]: value };
     setCustomFields(next);
-    await fetch(`/api/contacts/${contact.id}`, {
+    setCustomFieldError(null);
+
+    const res = await fetch(`/api/contacts/${contact.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ customFields: next }),
     });
+
+    if (!res.ok) {
+      // Server-side type validation rejected this value (a defense-in-depth
+      // check — the NUMBER/DATE inputs already constrain most bad input at
+      // the browser level, but a direct API call could still send anything).
+      // Revert to the last known-good value rather than leaving the UI
+      // showing something that was never actually saved.
+      setCustomFields(previous);
+      const data = await res.json().catch(() => null);
+      const reason = data?.fieldErrors?.[key] ?? data?.error ?? "Couldn't save that value.";
+      setCustomFieldError(reason);
+    }
   };
 
   return (
@@ -335,9 +351,14 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
             {/* Custom Fields — real data now: definitions come from
                 /api/custom-field-definitions (org-wide), values live on
                 Contact.customFields (a plain Json column, keyed by
-                definition.key) and save through PATCH /api/contacts/:id. */}
+                definition.key) and save through PATCH /api/contacts/:id
+                (which validates each value against its declared FieldType
+                server-side — see src/lib/custom-fields/validate.ts). */}
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Custom Fields</label>
+              {customFieldError && (
+                <p style={{ margin: 0, fontSize: "0.8em", color: "#f87171" }}>{customFieldError}</p>
+              )}
               {fieldDefs.length === 0 ? (
                 <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.5 }}>No custom fields defined for this organization yet.</p>
               ) : (

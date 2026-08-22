@@ -22,6 +22,13 @@ export async function updateTag(organizationId: string, id: string, name?: strin
   });
 }
 
+export async function deleteTag(organizationId: string, id: string): Promise<void> {
+  // ContactTag.tag is onDelete: Cascade (prisma/migrations/20260822090816_m8_crm_relations)
+  // — every contact's use of this tag is removed by Postgres itself, no
+  // manual ContactTag cleanup needed here.
+  await prisma.tag.deleteMany({ where: { id, organizationId } });
+}
+
 export async function getContactTags(organizationId: string, contactId: string): Promise<Tag[]> {
   const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId } });
   if (!contact) return [];

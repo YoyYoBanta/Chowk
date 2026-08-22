@@ -45,6 +45,8 @@ export default function AdminPage() {
 
   const [tags, setTags] = useState<TagDTO[]>([]);
   const [newTag, setNewTag] = useState("");
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState("");
 
   const [replies, setReplies] = useState<QuickReplyDTO[]>([]);
   const [newShortcut, setNewShortcut] = useState("");
@@ -134,6 +136,28 @@ export default function AdminPage() {
       setTags([...tags, data.tag]);
       setNewTag("");
     }
+  };
+
+  const handleStartRenameTag = (tag: TagDTO) => {
+    setEditingTagId(tag.id);
+    setEditingTagName(tag.name);
+  };
+
+  const handleSaveRenameTag = async (tagId: string) => {
+    const name = editingTagName.trim();
+    setEditingTagId(null);
+    if (!name) return;
+    setTags(tags.map(t => (t.id === tagId ? { ...t, name } : t)));
+    await fetch(`/api/tags/${tagId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  };
+
+  const handleDeleteTag = async (tagId: string) => {
+    setTags(tags.filter(t => t.id !== tagId));
+    await fetch(`/api/tags/${tagId}`, { method: "DELETE" });
   };
 
   const handleCreateReply = async () => {
@@ -232,8 +256,37 @@ export default function AdminPage() {
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
               {tags.map(tag => (
-                <span key={tag.id} style={{ padding: "6px 12px", background: "rgba(99, 102, 241, 0.1)", border: "1px solid rgba(99, 102, 241, 0.2)", borderRadius: "16px", color: "#818cf8", fontSize: "0.9em", fontWeight: 500 }}>
-                  {tag.name}
+                <span
+                  key={tag.id}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "6px 6px 6px 12px", background: "rgba(99, 102, 241, 0.1)", border: "1px solid rgba(99, 102, 241, 0.2)", borderRadius: "16px", color: "#818cf8", fontSize: "0.9em", fontWeight: 500 }}
+                >
+                  {editingTagId === tag.id ? (
+                    <input
+                      autoFocus
+                      value={editingTagName}
+                      onChange={e => setEditingTagName(e.target.value)}
+                      onBlur={() => void handleSaveRenameTag(tag.id)}
+                      onKeyDown={e => e.key === "Enter" && handleSaveRenameTag(tag.id)}
+                      style={{ width: "100px", padding: "2px 6px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#fff", outline: "none", fontSize: "inherit" }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleStartRenameTag(tag)}
+                      title="Rename"
+                      style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, font: "inherit" }}
+                    >
+                      {tag.name}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteTag(tag.id)}
+                    aria-label={`Delete ${tag.name}`}
+                    style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: "0.9em", opacity: 0.6 }}
+                  >
+                    ×
+                  </button>
                 </span>
               ))}
               {tags.length === 0 && <p style={{ opacity: 0.5 }}>No tags created yet.</p>}
