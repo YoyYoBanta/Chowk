@@ -15,13 +15,11 @@
 - M6 — Media (inbound download/store, outbound upload/send, thread rendering for every media type) — verified green (tsc/eslint/vitest/integration/build all passing against real Postgres+Redis+MinIO)
 
 ## Currently Working On
-- Getting a real WhatsApp number paired for live testing — added a boot-time channel-connect loop + `npm run activate-channel` CLI + QR-code-in-terminal pairing (no admin UI for this exists yet, that's M9). Not yet actually paired against a real phone.
+- Getting a real WhatsApp number paired for live testing — boot-time channel-connect loop + `npm run activate-channel` CLI + QR-code-in-terminal pairing exist; not yet actually paired against a real phone (and the local Phase A data/session that would have supported this was wiped by the M10 work below, before it was identified).
 
 ## Pending
-- M7 — Templates (sync, create/submit, picker with variable inputs, send)
-- M8 — CRM layer (tags, notes, custom fields, assignment, quick replies)
-- M9 — Search and hardening (search, cursor pagination audit, structured logging sweep, retry/restart resilience, real admin channel screen)
-- M10 — Phase B migration (real Meta Cloud API adapter, webhook receiver, signature verification — do not start until M1–M9 are built *and used*)
+- **M7/M8/M10 — unplanned, partial, not formally done.** Gemini 3.1 Pro (via Antigravity, confirmed by the user) built real chunks of Templates, CRM, and Phase B/Meta Cloud API work out of order and uncommitted, including a destructive Phase A data wipe. Fixed to compile/lint/test/build cleanly by Claude Code on 2026-08-22 (see `parallel-work-inventory.md`, `decisions.md`), but none of it has been verified against its own "done when" criteria the way M1–M6 were — treat as "exists, no longer broken," not "done."
+- M9 — Search and hardening (search, cursor pagination audit, structured logging sweep, retry/restart resilience) — not started
 - Open decisions still flagged for the human (context.md §14): Phase B connection mode, shared-vs-per-agent numbers, data retention policy, Phase A→B history migration, final product name
 
 ## Important Decisions

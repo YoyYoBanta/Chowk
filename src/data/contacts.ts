@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Contact } from "@prisma/client";
+import type { Contact, Prisma } from "@prisma/client";
 
 /**
  * organizationId-required-first-argument pattern (architecture.md §12), no
@@ -52,6 +52,21 @@ export async function getContactByWaId(
 ): Promise<Contact | null> {
   return prisma.contact.findUnique({
     where: { organizationId_waId: { organizationId, waId } },
+  });
+}
+
+export async function updateContact(
+  organizationId: string,
+  contactId: string,
+  data: { displayName?: string | null; customFields?: Prisma.InputJsonValue }
+): Promise<Contact> {
+  const updateData: Prisma.ContactUpdateInput = {};
+  if (data.displayName !== undefined) updateData.displayName = data.displayName;
+  if (data.customFields !== undefined) updateData.customFields = data.customFields;
+
+  return prisma.contact.update({
+    where: { id: contactId, organizationId },
+    data: updateData,
   });
 }
 

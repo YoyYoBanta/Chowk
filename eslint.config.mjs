@@ -14,9 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Agent-tooling scratch space (temporary git worktrees, etc.) — not
     // part of this project's source, and each worktree carries its own
-    // generated .next/** that the pattern above doesn't reach because it's
     // nested rather than at the repo root.
     ".claude/**",
+    ".infra/**",
   ]),
   // Underscore-prefixed unused parameters are a deliberate "intentionally
   // unused" marker (introduced by M2's stub adapters — src/providers/

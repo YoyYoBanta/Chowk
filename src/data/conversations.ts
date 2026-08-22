@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Channel, Contact, Conversation, Message } from "@prisma/client";
+import type { Channel, Contact, Conversation, ConversationStatus, Message, Prisma } from "@prisma/client";
 import { encodeCursor } from "@/lib/validation/pagination";
 
 /**
@@ -113,12 +113,59 @@ export interface ConversationCursor {
  */
 export async function listConversationsPage(
   organizationId: string,
-  opts: { limit: number; cursor?: ConversationCursor },
+  opts: { 
+    limit: number; 
+    cursor?: ConversationCursor;
+    status?: ConversationStatus;
+    assignedUserId?: string | null;
+    channelId?: string;
+    tagId?: string;
+    search?: string;
+  },
 ): Promise<{ items: ConversationListItem[]; nextCursor: string | null }> {
+  let filteredContactIds: string[] | undefined;
+
+  if (opts.tagId || opts.search) {
+    const whereClause: Prisma.ContactWhereInput = { organizationId };
+
+    if (opts.search) {
+      whereClause.OR = [
+        { name: { contains: opts.search, mode: "insensitive" } },
+        { displayName: { contains: opts.search, mode: "insensitive" } },
+        { waId: { contains: opts.search } },
+      ];
+    }
+
+    // Resolve matching contact ids first (by tag and/or search text), then
+    // filter the conversation query below by contactId — cheaper than a
+    // join for what's still a small-N tag/search result set at Tier 1 scale.
+    const contactMatches = await prisma.contact.findMany({
+      where: whereClause,
+      select: { id: true }
+    });
+    
+    const baseContactIds = contactMatches.map((c: { id: string }) => c.id);
+
+    if (opts.tagId) {
+      const contactTags = await prisma.contactTag.findMany({ 
+        where: { tagId: opts.tagId }, 
+        select: { contactId: true } 
+      });
+      const taggedIds = new Set(contactTags.map(ct => ct.contactId));
+      filteredContactIds = opts.search ? baseContactIds.filter(id => taggedIds.has(id)) : Array.from(taggedIds);
+    } else {
+      filteredContactIds = baseContactIds;
+    }
+  }
+
   const take = opts.limit + 1;
   const rows = await prisma.conversation.findMany({
     where: {
       organizationId,
+      ...(opts.status ? { status: opts.status } : {}),
+      ...(opts.assignedUserId !== undefined ? { assignedUserId: opts.assignedUserId } : {}),
+      ...(opts.channelId ? { channelId: opts.channelId } : {}),
+      ...(filteredContactIds ? { contactId: { in: filteredContactIds } } : {}),
       ...(opts.cursor
         ? {
             OR: [
@@ -188,5 +235,20 @@ export async function getConversationWithContact(
       contact: true,
       channel: { select: { id: true, displayName: true, provider: true } },
     },
+  });
+}
+
+export async function updateConversation(
+  organizationId: string,
+  conversationId: string,
+  data: { assignedUserId?: string | null; status?: ConversationStatus }
+): Promise<Conversation> {
+  const updateData: Prisma.ConversationUpdateInput = {};
+  if (data.assignedUserId !== undefined) updateData.assignedUserId = data.assignedUserId;
+  if (data.status !== undefined) updateData.status = data.status;
+
+  return prisma.conversation.update({
+    where: { id: conversationId, organizationId },
+    data: updateData,
   });
 }

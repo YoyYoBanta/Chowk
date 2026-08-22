@@ -127,6 +127,10 @@ notifications) before the maintainer confirmed the choice knowingly. Not a
 decision made or endorsed unilaterally — recorded so the risk and the exit
 plan are both on record, not just in chat history.
 
+### Pairing via GitHub Codespaces, not a local dev environment
+**Decision:** The live pairing of the WhatsApp number will be executed inside a GitHub Codespace.
+**Why:** The host machine currently lacks a local Node and Docker installation. Pairing Baileys requires a live terminal where the QR code can be actively observed and scanned by the human operator's mobile device. Running the stack (`npm run worker`) and the activation script (`npm run activate-channel`) directly in a Codespace avoids the local dependency roadblock while providing the required live stdout stream.
+
 ### Channel pairing: a boot-time auto-connect loop + a CLI script, not an admin UI
 **Decision:** `src/worker/index.ts`'s `connectActiveChannels()` now calls
 `provider.connect()` for every `ACTIVE` channel across every org on Worker
@@ -157,3 +161,59 @@ step; `src/lib/storage/object-store.ts` does not call `HeadBucket`/
 real deployment, not something the application should be doing at runtime. An
 `ensureBucketExists()` was considered and rejected as unnecessary complexity
 for what should be a `terraform`/ops-script/manual-console concern.
+
+---
+
+## M7/M8/M10 fix-up (2026-08-22)
+
+Unplanned work — produced by Gemini 3.1 Pro via Antigravity, found
+uncommitted, source confirmed by the user after two Claude Code sessions
+couldn't identify it. Full narrative in `parallel-work-inventory.md`;
+`PROGRESS.md`'s M7/M8/M10 section has the "what works / what doesn't"
+breakdown. This section is just the real decisions made while fixing it.
+
+### Fix, don't discard — even though the work skipped the required build order
+**Decision:** per the user's explicit instruction, kept the M7/M8/M10 code
+and repaired it (schema/migration/compile/lint/test/build) rather than
+reverting to the clean M6 state and rebuilding M7 onward in order.
+**Why:** the user's call to make, not mine — they were told plainly that
+this skips context.md §11's "do not start M10 until M1–M9 are done and
+used" gate, and chose to keep it anyway. Recorded here so the deviation
+from the documented build order is traceable to an explicit decision, not
+an oversight.
+
+### Template language travels in `templatePayload`, not a new `Message` column
+**Decision:** `Message.templatePayload` (already `Json?` in the schema)
+now stores `{ languageCode, variables }` instead of just `variables` — the
+worker's send-time re-check needs to know which language variant to look
+up, and there's no dedicated column for it.
+**Why:** context.md §7.4's literal schema has no language column on
+`Message`, and the same "don't add a column for something JSON can carry
+without a real modeling reason" judgment this codebase already made for
+LOCATION coordinates (see the M6 section above) applies here too.
+**Considered and rejected:** a new `Message.templateLanguage` column.
+
+### Send-time template re-check happens at both the service layer and the Worker
+**Decision:** `sendTemplateMessage()` (API-request time) and
+`sendTemplateViaProvider()` (actual-send time, inside the Worker) both
+independently look up the `Template` row and check `status === "APPROVED"`.
+**Why:** exactly the defense-in-depth precedent M5's window check already
+established (`src/services/messages/send-message.ts` + `src/providers/baileys/simulate-window.ts`)
+— a template's status can flip (Meta sync, or a paused/rejected status
+landing) in the gap between a request being accepted and the Worker job
+actually running, and context.md §8.4 is explicit that the check belongs
+at send time, "not just at selection time."
+
+### Contact panel's fake demo data replaced with an honest placeholder, not built out
+**Decision:** the panel showed hardcoded sample values ("VIP Customer",
+"Acme Corp", "$4,200") for tags/custom fields that don't actually exist for
+any real contact. Replaced with "Not wired up in this panel yet" rather
+than either leaving the fake data or building the real integration.
+**Why:** the backend (data layer + API routes) for tags/custom fields
+already exists and works — only this one panel's UI never calls it. Fully
+wiring it up was judged out of scope for a fix-up pass (real feature work,
+not a bug fix); leaving fabricated data in a product a real user might look
+at was judged worse than an honest "not yet" — matching this codebase's
+own established convention from M3's original read-only contact panel.
+**Worth doing properly later:** wire the panel to the real
+`/api/contacts/:id/tags` and custom-fields routes.

@@ -62,3 +62,44 @@ export async function GET(
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const correlationId = newCorrelationId();
+  const route = "PATCH /api/conversations/:id";
+
+  const auth = await requireApiSession(request);
+  if (!auth.session) return auth.response;
+  const { organizationId } = auth.session;
+  const { id: conversationId } = await context.params;
+
+  logger.info("request start", { organizationId, correlationId, route, conversationId });
+
+  try {
+    const body = await request.json();
+    
+    // We import updateConversation dynamically to avoid circular dependencies if any,
+    // or just assume it's imported at the top. I'll add the import later if needed.
+    // Actually, I can import it at the top of the file in another chunk.
+    const { updateConversation } = await import("@/data/conversations");
+
+    const conversation = await updateConversation(organizationId, conversationId, {
+      assignedUserId: body.assignedUserId,
+      status: body.status,
+    });
+
+    logger.info("request end", { organizationId, correlationId, route, conversationId, statusCode: 200 });
+    return NextResponse.json({ conversation });
+  } catch (error) {
+    logger.error("request failed", {
+      organizationId,
+      correlationId,
+      route,
+      conversationId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+}

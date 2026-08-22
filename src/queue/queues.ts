@@ -47,6 +47,10 @@ export function getIngestInboundQueue(): Queue<IngestInboundJobData> {
   if (!ingestInboundQueue) {
     ingestInboundQueue = new Queue<IngestInboundJobData>(QUEUE_NAMES.ingestInbound, {
       connection: redisConnection,
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: { type: "exponential", delay: 1_000 },
+      },
     });
   }
   return ingestInboundQueue;

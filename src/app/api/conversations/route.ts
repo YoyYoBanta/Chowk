@@ -6,6 +6,7 @@ import { messagePreviewText } from "@/lib/messages/render";
 import { getWindowState } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 import type { ConversationCursor } from "@/data/conversations";
+import type { ConversationStatus } from "@prisma/client";
 
 /**
  * GET /api/conversations — list, cursor-paginated by (lastMessageAt, id),
@@ -40,6 +41,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const query: PaginationQuery = parsedQuery.data;
 
+  const statusParam = url.searchParams.get("status");
+  const status: ConversationStatus | undefined =
+    statusParam === "OPEN" || statusParam === "DONE" ? statusParam : undefined;
+  const assignedUserId = url.searchParams.has("assignedUserId") ? url.searchParams.get("assignedUserId") : undefined;
+  const channelId = url.searchParams.get("channelId") || undefined;
+  const tagId = url.searchParams.get("tagId") || undefined;
+  const search = url.searchParams.get("search") || undefined;
+
   let cursor: ConversationCursor | undefined;
   if (query.cursor) {
     const decoded = decodeCursor<{ lastMessageAt: string; id: string }>(query.cursor);
@@ -54,6 +63,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { items, nextCursor } = await listConversationsPage(organizationId, {
       limit: query.limit,
       cursor,
+      status,
+      assignedUserId,
+      channelId,
+      tagId,
+      search,
     });
 
     const conversations = items.map((conversation) => {

@@ -212,3 +212,38 @@ This milestone's own code had never been compiled, linted, tested, or built befo
 - `npm run test:integration` — 15 files, 46 tests, all passing against the real Postgres + real Redis stood up above (`src/lib/storage/object-store.ts` stays mocked in these specific tests, matching the existing, deliberate design documented in TODO-VERIFY.md — not something this pass changed), including the real HTTP `multipart/form-data` POST test (`media-route.integration.test.ts`) proving `File`/`FormData` are genuinely available and correctly typed in the Next.js Route Handler runtime.
 - `npm run build` — Next.js/Turbopack production build succeeds; `/api/media/[id]` is listed as a dynamic (`ƒ`) route alongside every other API route.
 - Seed re-verified against the fresh database: `npm run seed` produces the same M1/M2/M3 demo data as every prior milestone, unchanged by M6.
+
+## M7/M8/M10 — unplanned, out-of-order work, found and fixed 2026-08-22 (not formally "done")
+
+**Important context, read before trusting anything below:** unlike every section above, this work was NOT built by a Claude Code session following `implementation-plan.md`'s order. It appeared, already uncommitted, in the working tree — produced by Gemini 3.1 Pro via the Antigravity IDE, confirmed directly by the user after two Claude Code sessions found it and could not otherwise identify the source. It skipped M7→M8→M9→M10's required order (context.md §11: "do not start M10 until M1–M9 are done *and used*") and included M7 (Templates) and M8 (CRM) work in the same pass, plus a script that wiped all local Phase A data. Full detail, including the original discovery and the fix-up pass: `parallel-work-inventory.md`.
+
+The user's instruction, once the source was confirmed: keep it, don't discard, fix the real problems, improve what's worth improving. That fix-up (this Claude Code session, same day) is what turned this from "does not compile" into the state described below — **but "compiles/lints/tests/builds cleanly" is not this project's bar for a milestone being done** (context.md §11: "done means demonstrable, not merely compiling"). None of M7/M8/M10's own "done when" criteria were exercised end to end. Treat the labels below as "exists and is no longer broken," not "verified done" the way M1–M6 were.
+
+**M7 — Templates, partial:**
+- `Template` model + real migration (this fix-up added the migration; the model itself predates it). `src/data/templates.ts` (list/get/create/update-status/upsert-from-sync), `src/providers/baileys/simulate-templates.ts`-equivalent logic inline in `src/providers/baileys/adapter.ts` (`listTemplates`/`createTemplate`/`sendTemplate` — reads/writes the local table, renders `{{n}}` variables into plain text and sends via the same real socket path `sendText()` uses, bypassing the window check per context.md §4.1).
+- `POST /api/templates` (create + submit, now actually persists locally — see `parallel-work-inventory.md`'s fix-up section), `POST /api/templates/sync` (now actually calls `provider.listTemplates()` and upserts, was previously a hardcoded no-op), `GET /api/templates`.
+- Send-time `APPROVED` re-check (context.md §8.4) — missing entirely before this fix-up, now enforced at both the service layer (`sendTemplateMessage`) and the Worker layer (`sendTemplateViaProvider`), matching M5's window-check defense-in-depth precedent.
+- Template picker UI (`template-picker.tsx`) wired into the composer's closed-window state.
+- **Not done:** no scheduled 15-minute sync job (`src/worker/scheduler.ts` doesn't exist), no admin template screen showing rejection reasons, variable-count-mismatch validation not confirmed present, no tests of any kind for the template send path.
+
+**M8 — CRM layer, partial:**
+- `Tag`/`ContactTag`/`Note`/`CustomFieldDefinition`/`QuickReply` models + real migration. `src/data/tags.ts`/`notes.ts`/`quick-replies.ts`/`custom-fields.ts`, matching API routes under `/api/contacts/:id/{tags,notes}`, `/api/notes/:id`, `/api/tags`, `/api/quick-replies`.
+- Quick-reply `/` shortcut in the composer (real, fetches `/api/quick-replies`, arrow-key navigable).
+- Conversation list filters (All/Unassigned/Mine/Closed) and `PATCH /api/conversations/:id` (assign/status) — status dropdown had a real bug (offered `CLOSED`/`SNOOZED`, which aren't real `ConversationStatus` values; fixed to `OPEN`/`DONE`).
+- Admin screens for Tags and Quick Replies (`/dashboard/admin`), admin Channels screen (`/dashboard/admin/channels` — its backing `GET /api/channels` route didn't exist before this fix-up).
+- **Not done / real gaps:** the contact panel does not actually render tags or custom fields (was showing hardcoded fake sample data before this fix-up — replaced with an honest "not wired up yet" placeholder, not built out); no "Mine"/"Unassigned" UI for picking an assignee; no tenancy tests for any of the five new models (context.md §13's own stated requirement for every new model).
+
+## M10 — Phase B Migration, partial, NOT verified against a real Meta account
+
+**Works (compiles, lints, builds — not independently verified against real Meta docs by this fix-up, see TODO-VERIFY.md):**
+- Real Cloud API Adapter implemented (`src/providers/cloud-api/adapter.ts`) — text/media/template send, mark-as-read, media upload/download, template list/create, all making real Graph API HTTP calls.
+- Webhook receiver (`src/app/api/webhooks/meta/route.ts`) — challenge verification, signature check, `WebhookEvent` insert (model added by this fix-up — it didn't exist before and the route couldn't have run), enqueues onto the same real `ingest-inbound`/`status-update` queues Baileys uses.
+- HMAC-SHA256 signature verification (`src/providers/cloud-api/webhook-verify.ts`) — real `crypto.timingSafeEqual`, looks structurally correct.
+- Error code mapping (`src/providers/cloud-api/error-map.ts`) — plausible, commonly-known Meta Graph API codes (190, 131047, 131026, etc.), NOT independently confirmed against live docs by any session.
+- ESLint boundary rule (`src/providers/baileys` isolation) still passes with zero violations.
+- Cleaned Phase A database (destructive — see `parallel-work-inventory.md`) "to provide a fresh slate for Phase B interactions."
+
+**Explicitly NOT done:**
+- `WHATSAPP_PROVIDER` is still `baileys` in `.env` — this was never actually switched live, so none of the above has run against a real request.
+- Meta field names/payload shapes used throughout (webhook body shape, error codes, template component structure) have NOT been fetched-and-confirmed against `https://developers.facebook.com/docs/whatsapp/cloud-api` per context.md rule 1 — flagged in `TODO-VERIFY.md`, not guessed silently.
+- context.md §11's explicit gate — M1–M9 done *and used* before M10 starts — was not honored. This is now a fact of the codebase's history; revisit before treating M10 as real.

@@ -55,12 +55,14 @@ import type {
  */
 export function ThreadView({
   conversationId,
+  channelId,
   initialMessagesNewestFirst,
   initialOlderCursor,
   initialIsWindowOpen,
   initialClosesAt,
 }: {
   conversationId: string;
+  channelId: string;
   initialMessagesNewestFirst: MessageDTO[];
   initialOlderCursor: string | null;
   initialIsWindowOpen: boolean;
@@ -276,6 +278,7 @@ export function ThreadView({
       </div>
       <Composer
         conversationId={conversationId}
+        channelId={channelId}
         isWindowOpen={windowState.isWindowOpen}
         closesAt={windowState.closesAt}
         onOptimisticAdd={addOptimisticMessage}

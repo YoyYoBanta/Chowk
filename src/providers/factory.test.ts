@@ -35,7 +35,7 @@ describe("getWhatsAppProvider (provider selection by WHATSAPP_PROVIDER)", () => 
     15_000,
   );
 
-  it("selects the cloud-api stub adapter when WHATSAPP_PROVIDER=cloud-api", async () => {
+  it("selects the cloud-api adapter when WHATSAPP_PROVIDER=cloud-api", async () => {
     vi.stubEnv("WHATSAPP_PROVIDER", "cloud-api");
     vi.resetModules();
 
@@ -44,10 +44,11 @@ describe("getWhatsAppProvider (provider selection by WHATSAPP_PROVIDER)", () => 
 
     expect(provider.name).toBe("cloud-api");
 
-    // The stub genuinely implements the full WhatsAppProvider interface —
-    // this call compiling and resolving at all (to a clean "not
-    // implemented" result, not a type error or a missing method) is the
-    // point.
+    // No longer a pure "not implemented" stub as of M10's real Cloud API
+    // adapter — the interface still genuinely resolves cleanly (not a type
+    // error, not a thrown exception) for a channel that was never
+    // connect()-ed, which is the actual thing this test proves: the
+    // interface holds regardless of which provider is selected.
     const sendResult = await provider.sendText({
       channelId: "chan-1",
       to: "911234567890",
@@ -55,8 +56,8 @@ describe("getWhatsAppProvider (provider selection by WHATSAPP_PROVIDER)", () => 
     });
     expect(sendResult).toEqual({
       ok: false,
-      retryable: false,
-      code: "NOT_IMPLEMENTED",
+      retryable: true,
+      code: "NOT_CONFIGURED",
       message: expect.any(String),
     });
 

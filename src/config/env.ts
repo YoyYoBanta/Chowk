@@ -15,6 +15,10 @@ const envSchema = z.object({
 
   SESSION_SECRET: z.string().min(32),
 
+  META_APP_SECRET: z.string().optional(),
+  META_VERIFY_TOKEN: z.string().optional(),
+  META_ACCESS_TOKEN: z.string().optional(),
+
   OBJECT_STORAGE_ENDPOINT: z.string().url(),
   OBJECT_STORAGE_BUCKET: z.string().min(1),
   OBJECT_STORAGE_ACCESS_KEY: z.string().min(1),

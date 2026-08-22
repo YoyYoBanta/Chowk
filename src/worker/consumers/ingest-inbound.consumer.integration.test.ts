@@ -203,6 +203,17 @@ describe("processIngestInboundJob (real Postgres, no mocking)", () => {
       messageId: message?.id,
       mediaRef,
     });
-    await job?.remove();
+    // Best-effort cleanup, not a correctness assertion: if a real Worker
+    // process happens to be running against this same Redis (e.g. a
+    // developer's `npm run worker` left up alongside the test suite), it
+    // can pick up and lock this job before this line runs, and
+    // `job.remove()` throws on a locked job. The test's actual assertions
+    // are already done by this point — a locked job here is a sign the
+    // real pipeline is working, not a failure to surface.
+    try {
+      await job?.remove();
+    } catch {
+      // ignore — see comment above
+    }
   });
 });

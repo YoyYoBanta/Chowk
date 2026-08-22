@@ -301,10 +301,10 @@ than go stale.)_
 `src/worker/index.ts`'s `connectActiveChannels()`, `scripts/activate-channel.ts`,
 and the QR-printing addition to `src/providers/baileys/adapter.ts`'s
 `handleConnectionUpdate`. This was needed because the maintainer is about to
-pair a real (personal) WhatsApp number for live testing and no way to
-actually connect a channel existed yet. M6's verification agent already
-closed out Flows 1–4 and 7 for real (see `PROGRESS.md`'s M6 section) — those
-are trustworthy now. Flow 9 itself has NOT been run against a real phone
-yet; once the maintainer actually pairs, worth confirming this flow matches
-reality (especially the QR-rotation behavior and the resume-without-QR path
-on a second boot).
+pair a real (personal) WhatsApp number for live testing inside a GitHub
+Codespace (due to lacking a local Node/Docker dev environment). M6's
+verification agent already closed out Flows 1–4 and 7 for real (see
+`PROGRESS.md`'s M6 section) — those are trustworthy now. Flow 9 itself has NOT
+been run against a real phone yet; once the maintainer actually pairs, worth
+confirming this flow matches reality (especially the QR-rotation behavior and
+the resume-without-QR path on a second boot).

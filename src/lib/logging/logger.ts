@@ -63,6 +63,9 @@ export interface LogFields {
   mimeType?: string;
   sizeBytes?: number;
   hasMedia?: boolean;
+  // M7 addition — a template's name (an identifier, like messageType or
+  // errorCode above), never its rendered/substituted body.
+  templateName?: string;
 }
 
 interface LogLine extends LogFields {

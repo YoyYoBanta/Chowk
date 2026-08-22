@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Channel } from "@prisma/client";
+import type { Channel, Template } from "@prisma/client";
 import qrcodeTerminal from "qrcode-terminal";
 import makeWASocket, {
   DisconnectReason,
@@ -14,6 +14,7 @@ import makeWASocket, {
 import { updateChannelStatus } from "@/data/channels";
 import { findMessageByProviderMessageId } from "@/data/messages";
 import { getConversationWithContact } from "@/data/conversations";
+import { createTemplate, listTemplates, getTemplateByName } from "@/data/templates";
 import { getIngestInboundQueue, getStatusUpdateQueue, QUEUE_NAMES } from "@/queue/queues";
 import { createDbAuthState } from "./session-store";
 import {
@@ -325,7 +326,11 @@ export class BaileysProvider implements WhatsAppProvider {
     const windowRejection = await this.checkWindow(p.channelId, p.to);
     if (windowRejection) return windowRejection;
 
-    const sock = this.sockets.get(p.channelId);
+    return this._doSendText(p.channelId, p.to, p.body);
+  }
+
+  private async _doSendText(channelId: string, to: string, body: string): Promise<SendResult> {
+    const sock = this.sockets.get(channelId);
     if (!sock) {
       return {
         ok: false,
@@ -336,7 +341,7 @@ export class BaileysProvider implements WhatsAppProvider {
     }
 
     try {
-      const sent = await sock.sendMessage(digitsToJid(p.to), { text: p.body });
+      const sent = await sock.sendMessage(digitsToJid(to), { text: body });
       const providerMessageId = sent?.key?.id;
       if (!providerMessageId) {
         return {
@@ -433,13 +438,29 @@ export class BaileysProvider implements WhatsAppProvider {
     return checkWindowOpenForSend(channel.organizationId, channelId, toWaId);
   }
 
-  async sendTemplate(_p: SendTemplateParams): Promise<SendResult> {
-    return {
-      ok: false,
-      retryable: false,
-      code: "NOT_IMPLEMENTED",
-      message: "baileys: sendTemplate() lands in M7",
-    };
+  async sendTemplate(p: SendTemplateParams): Promise<SendResult> {
+    const channel = this.channels.get(p.channelId);
+    if (!channel) {
+      return { ok: false, retryable: true, code: "NO_ACTIVE_SESSION", message: "Channel not connected." };
+    }
+
+    const template = await getTemplateByName(channel.organizationId, p.channelId, p.templateName, p.languageCode);
+    if (!template) {
+      return { ok: false, retryable: false, code: "TEMPLATE_NOT_FOUND", message: "Template not found in local db." };
+    }
+
+    if (template.status !== "APPROVED") {
+      return { ok: false, retryable: false, code: "TEMPLATE_NOT_APPROVED", message: "Template is not approved." };
+    }
+
+    const components = template.components as { body?: string } | null;
+    let bodyText = components?.body ?? "";
+    // Positional variable substitution: Meta templates use {{1}}, {{2}}, ...
+    for (const [key, value] of Object.entries(p.variables)) {
+      bodyText = bodyText.split(`{{${key}}}`).join(value);
+    }
+
+    return this._doSendText(p.channelId, p.to, bodyText);
   }
 
   /**
@@ -550,12 +571,30 @@ export class BaileysProvider implements WhatsAppProvider {
     return { id, mimeType: mime, fileLength: file.length };
   }
 
-  async listTemplates(_channelId: string): Promise<ProviderTemplate[]> {
-    return [];
+  async listTemplates(channelId: string): Promise<ProviderTemplate[]> {
+    const channel = this.channels.get(channelId);
+    if (!channel) return [];
+
+    const templates = await listTemplates(channel.organizationId, channelId);
+    return templates.map(toProviderTemplate);
   }
 
-  async createTemplate(_channelId: string, _t: TemplateDefinition): Promise<ProviderTemplate> {
-    throw new Error("baileys: createTemplate() lands in M7");
+  async createTemplate(channelId: string, t: TemplateDefinition): Promise<ProviderTemplate> {
+    const channel = this.channels.get(channelId);
+    if (!channel) throw new Error("Channel not found");
+
+    // context.md §8.0.4: "createTemplate writes locally with status
+    // APPROVED immediately" — Baileys has no real approval process to
+    // simulate, so a template an agent creates is usable right away.
+    const created = await createTemplate(channel.organizationId, channelId, {
+      name: t.name,
+      language: t.languageCode,
+      category: t.category,
+      status: "APPROVED",
+      components: { body: t.body },
+    });
+
+    return toProviderTemplate(created);
   }
 
   onInbound(handler: (e: NormalizedInboundEvent) => Promise<void>): void {
@@ -578,6 +617,29 @@ export class BaileysProvider implements WhatsAppProvider {
  * render one; `AnyRegularMessageContent`'s audio variant has no `caption`
  * field at all).
  */
+/**
+ * Maps a stored `Template` row to the provider-agnostic `ProviderTemplate`
+ * shape (M7). `Template.status` is deliberately a raw string in our schema
+ * (context.md §7.5: "not enumed, since Meta adds values"), but
+ * `ProviderTemplate.status` is the narrower 3-value union the rest of the
+ * app expects — an unrecognized status (shouldn't happen for a Baileys-
+ * simulated template, since createTemplate() only ever writes "APPROVED",
+ * but defensive regardless) falls back to "PENDING" rather than widening
+ * the type or guessing.
+ */
+function toProviderTemplate(t: Template): ProviderTemplate {
+  const components = t.components as { body?: string } | null;
+  const status: ProviderTemplate["status"] =
+    t.status === "APPROVED" || t.status === "PENDING" || t.status === "REJECTED" ? t.status : "PENDING";
+  return {
+    name: t.name,
+    languageCode: t.language,
+    status,
+    category: t.category,
+    body: components?.body ?? "",
+  };
+}
+
 function buildBaileysMediaContent(
   mimeType: string,
   buffer: Buffer,

@@ -48,3 +48,9 @@ next-env.d.ts
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# portable local dev toolchain (Node/Postgres/Redis/MinIO binaries) — large, machine-local
+/.infra/
+
+# stray agent worktrees
+/.claude/worktrees/

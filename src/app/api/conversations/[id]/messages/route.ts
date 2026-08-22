@@ -5,7 +5,7 @@ import { getConversationById } from "@/data/conversations";
 import { listMessagesPage, type MessageCursor } from "@/data/messages";
 import { attachMediaSummaries, attachMediaSummary } from "@/data/media";
 import { decodeCursor, paginationQuerySchema, type PaginationQuery } from "@/lib/validation/pagination";
-import { sendMediaMessage, sendTextMessage, type SendMessageResult } from "@/services/messages/send-message";
+import { sendMediaMessage, sendTextMessage, sendTemplateMessage, type SendMessageResult } from "@/services/messages/send-message";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 
 /**
@@ -49,6 +49,8 @@ export async function GET(
   }
   const query: PaginationQuery = parsedQuery.data;
 
+  const search = url.searchParams.get("search") || undefined;
+
   let cursor: MessageCursor | undefined;
   if (query.cursor) {
     const decoded = decodeCursor<{ metaTimestamp: string; id: string }>(query.cursor);
@@ -63,6 +65,7 @@ export async function GET(
     const { items, nextCursor } = await listMessagesPage(organizationId, conversationId, {
       limit: query.limit,
       cursor,
+      search,
     });
     // M6: attach each message's media summary (null if it has none, or has
     // media still downloading — src/services/media/download-and-store.ts)
@@ -120,9 +123,22 @@ export async function GET(
  * architecture.md §7's sequence diagram ("Svc-->>API: 202 { messageId,
  * status: PENDING }").
  */
-const sendMessageBodySchema = z.object({
-  body: z.string().trim().min(1, "Message body cannot be empty").max(4096),
-});
+const sendMessageBodySchema = z.union([
+  z.object({
+    type: z.literal("text").optional(),
+    body: z.string().trim().min(1, "Message body cannot be empty").max(4096),
+  }),
+  z.object({
+    type: z.literal("template"),
+    templateName: z.string().min(1),
+    languageCode: z.string().min(1),
+    // Zod 4's z.record() requires both the key and value schema explicitly
+    // (Zod 3 inferred a string key) — z.record(z.string()) alone silently
+    // widened to Record<string, unknown> and broke the type downstream at
+    // the sendTemplateMessage() call below.
+    variables: z.record(z.string(), z.string()),
+  }),
+]);
 
 export async function POST(
   request: NextRequest,
@@ -195,10 +211,24 @@ export async function POST(
         return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
       }
 
-      result = await sendTextMessage(
-        { organizationId, conversationId, userId, body: parsed.data.body },
-        { correlationId },
-      );
+      if (parsed.data.type === "template") {
+        result = await sendTemplateMessage(
+          {
+            organizationId,
+            conversationId,
+            userId,
+            templateName: parsed.data.templateName,
+            languageCode: parsed.data.languageCode,
+            variables: parsed.data.variables,
+          },
+          { correlationId },
+        );
+      } else {
+        result = await sendTextMessage(
+          { organizationId, conversationId, userId, body: parsed.data.body },
+          { correlationId },
+        );
+      }
     }
 
     if (!result.ok) {

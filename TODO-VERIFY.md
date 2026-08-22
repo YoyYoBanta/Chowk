@@ -943,6 +943,69 @@ this workaround long-term.
    `prisma migrate resolve`) instead of a plain `migrate deploy` on any
    database that already has the old folder name recorded.
 
+## M7/M8/M10 — unplanned work fix-up (2026-08-22)
+
+Context: this work was not built by a Claude Code session — it was produced
+by Gemini 3.1 Pro via the Antigravity IDE, found already uncommitted in the
+working tree, and fixed (not discarded) per the user's explicit
+instruction. Full narrative: `parallel-work-inventory.md`. This section
+covers only the Meta-Cloud-API-specifics uncertainty context.md rule 1
+cares about — everything else the fix-up touched is in `decisions.md` and
+`PROGRESS.md`'s M7/M8/M10 section.
+
+- **None of the Meta webhook/Graph API field names, shapes, or error codes
+  used in `src/app/api/webhooks/meta/route.ts`, `src/providers/cloud-api/adapter.ts`,
+  or `src/providers/cloud-api/error-map.ts` were fetched-and-confirmed
+  against live Meta documentation by any session** — not Gemini's original
+  pass (no citations or verification notes found anywhere in that code),
+  and not this fix-up (out of scope for a compile/lint/test fix-up; this is
+  real verification work M10 itself is supposed to do, per context.md rule 1
+  and its own task list in `implementation-plan.md`). Specifically
+  unverified: `hub.mode`/`hub.verify_token`/`hub.challenge`/
+  `x-hub-signature-256` (webhook verification), the `whatsapp_business_account`/
+  `entry`/`changes`/`value.metadata.phone_number_id`/`messages`/`statuses`
+  payload shape, the `messaging_product`/`recipient_type`/message-type
+  payload shapes for text/media/template sends, the media upload/download
+  two-step flow's exact endpoints, and every numeric error code in
+  `error-map.ts` (4, 190, 130429, 80007, 131047, 131026). These are
+  plausible, commonly-documented values consistent with widely-known Meta
+  Cloud API conventions — not fabricated — but "plausible from training
+  data" is exactly what context.md rule 1 says not to trust for this API
+  specifically, since it "changed materially" before. **Before actually
+  flipping `WHATSAPP_PROVIDER` to `cloud-api` against a real account, fetch
+  and read `https://developers.facebook.com/docs/whatsapp/cloud-api` and
+  confirm every one of the above against it.**
+- **`InteractivePayload` extraction from a real Meta interactive-reply
+  webhook was left unimplemented on purpose** (`extractInteractive()` in
+  the webhook route always returns `null`) rather than guessing Meta's real
+  button_reply/list_reply payload shape — the message still ingests
+  correctly as its mapped type either way (`raw` preserves the original
+  payload for later use), this is a deliberately deferred gap, not a
+  silent one.
+- **`ProviderTemplate.status`'s narrow 3-value union (`APPROVED`/`PENDING`/`REJECTED`,
+  fixed at M2 — context.md §8.0.1) doesn't cover Meta's real template
+  statuses** (context.md §4.2 itself names "paused/disabled states" as
+  real, beyond just those three). `src/providers/cloud-api/adapter.ts`'s
+  new `normalizeMetaTemplateStatus()` maps anything unrecognized to
+  `PENDING` (never silently `APPROVED`) rather than widening the shared
+  type — worth reconsidering whether `ProviderTemplate.status` should
+  become a wider type (or a raw string, matching how `Template.status`
+  itself is deliberately un-enumed) once M10 is actually being verified
+  for real.
+- **The M1 migration-ordering bug fix above (`20260821000000_m1_tenancy` →
+  `20260820200000_m1_tenancy`) and this fix-up's two new migrations
+  (`20260822010000_m7_m8_supporting_models`, `20260822081600_m10_webhook_event`)
+  were both applied to, and verified against, the SAME already-partially-populated
+  local Postgres instance Gemini's session had been using** (via
+  `prisma migrate resolve --applied` for the models that already existed
+  from an untracked `prisma db push`, and a genuine `prisma migrate dev`
+  for the one that didn't) — not a from-empty database like M1–M6's own
+  verification used. `prisma migrate status` reports clean against all 5
+  migrations on this instance; worth a from-empty dry run (drop + recreate
+  + `migrate deploy`) before trusting this migration set applies cleanly to
+  a database that never had Gemini's untracked `db push` applied to it in
+  the first place.
+
 **Verification commands, actual output, this pass:**
 
 - `npx tsc --noEmit` — clean, 0 errors (after fixes 1–2 above).

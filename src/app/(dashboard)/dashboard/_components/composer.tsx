@@ -4,52 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import { formatDurationShort } from "@/lib/format/duration";
 import { ALL_SUPPORTED_MIME_TYPES, mediaKindForMime, messageTypeForMediaKind } from "@/services/media/limits";
 import type { MessageDTO } from "../../_lib/types";
+import { TemplatePicker } from "./template-picker";
 
-/** Best-effort optimistic type guess for a picked file — the server is the
- * real authority (src/services/media/limits.ts's validateOutboundMedia, in
- * src/services/messages/send-message.ts) and will reject an unsupported
- * file with a clear error even if this guesses wrong. */
 function optimisticMessageType(mimeType: string): MessageDTO["type"] {
   const kind = mediaKindForMime(mimeType);
   return kind ? messageTypeForMediaKind(kind) : "DOCUMENT";
 }
 
-/**
- * Text composer (context.md §10.4) — the milestone's most important
- * component (M5's own brief). Two mutually exclusive states, driven
- * ENTIRELY by server-provided window state (`isWindowOpen`/`closesAt`,
- * computed by the conversation-detail page/route via
- * src/services/window.ts on every request) — never recomputed here from a
- * possibly-stale `lastInboundAt`. This is deliberate: the send endpoint
- * itself (`POST /api/conversations/:id/messages`) checks the identical
- * server-side window state before accepting a send
- * (src/services/messages/send-message.ts), so there must be no gap between
- * what this component shows and what the API will actually do — an agent
- * must never be able to type a long message and only discover on send that
- * it was rejected.
- *
- * - **Window open**: the free-text input works exactly as it did in M4,
- *   plus a small "Window closes in Xh Ym" countdown line.
- * - **Window closed**: the free-text input is disabled outright, with a
- *   plain-English explanation and a disabled "Send a template" placeholder
- *   button — templates themselves don't exist until M7, so this is
- *   deliberately not a working picker, just a clearly-labeled future
- *   action.
- *
- * Sends via `POST /api/conversations/:id/messages`
- * (src/app/api/conversations/[id]/messages/route.ts).
- *
- * Optimistic UX (unchanged from M4): an optimistic `PENDING` row is added
- * to the thread the instant the agent hits send, reconciled once the
- * server responds — `onServerAck` replaces the temporary row with the
- * real, server-returned one; `onFailed` marks the optimistic row FAILED in
- * place if the request itself never reached the server, or the server
- * rejected it (including a 409 window-closed rejection reaching this
- * component despite the disabled state above — e.g. a stale page that
- * hasn't refetched since the window closed).
- */
+/** M8: client-side shape of one row from GET /api/quick-replies. */
+interface QuickReplyDTO {
+  id: string;
+  shortcut: string;
+  body: string;
+  mediaId: string | null;
+}
+
 export function Composer({
   conversationId,
+  channelId,
   isWindowOpen,
   closesAt,
   onOptimisticAdd,
@@ -57,9 +29,8 @@ export function Composer({
   onFailed,
 }: {
   conversationId: string;
-  /** Server-computed (src/services/window.ts), never derived here. */
+  channelId: string;
   isWindowOpen: boolean;
-  /** ISO string of when the window closes (or closed) — display only. */
   closesAt: string | null;
   onOptimisticAdd: (message: MessageDTO) => void;
   onServerAck: (tempId: string, real: MessageDTO) => void;
@@ -69,6 +40,81 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Quick Replies State
+  const [quickReplies, setQuickReplies] = useState<QuickReplyDTO[]>([]);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [quickReplyFilter, setQuickReplyFilter] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/quick-replies")
+      .then(res => res.json())
+      .then(data => {
+        if (data.quickReplies) setQuickReplies(data.quickReplies);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    
+    // Check for quick reply trigger
+    const match = val.match(/(^|\s)\/([a-zA-Z0-9_-]*)$/);
+    if (match) {
+      setShowQuickReplies(true);
+      setQuickReplyFilter(match[2].toLowerCase());
+      setSelectedIndex(0);
+    } else {
+      setShowQuickReplies(false);
+    }
+  };
+
+  const filteredQuickReplies = quickReplies.filter(qr => 
+    qr.shortcut.toLowerCase().includes(quickReplyFilter) ||
+    qr.body.toLowerCase().includes(quickReplyFilter)
+  );
+
+  const applyQuickReply = (qr: QuickReplyDTO) => {
+    const match = text.match(/(^|\s)\/([a-zA-Z0-9_-]*)$/);
+    if (match) {
+      const newText = text.substring(0, match.index) + (match[1] || "") + qr.body + " ";
+      setText(newText);
+    } else {
+      setText(text + qr.body + " ");
+    }
+    setShowQuickReplies(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showQuickReplies && filteredQuickReplies.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev + 1) % filteredQuickReplies.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev - 1 + filteredQuickReplies.length) % filteredQuickReplies.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyQuickReply(filteredQuickReplies[selectedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowQuickReplies(false);
+        return;
+      }
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  };
+
   const handleSend = async (): Promise<void> => {
     const body = text.trim();
     if (!body || sending || !isWindowOpen) return;
@@ -76,7 +122,12 @@ export function Composer({
     setSending(true);
     setText("");
 
-    const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // crypto.randomUUID(), not Date.now()/Math.random() — the eslint
+    // react-hooks/purity rule flags those two specific globals as "impure"
+    // even from inside an event-handler closure (a false positive here,
+    // since this never runs during render — only from onClick/onKeyDown —
+    // but a real UUID is the better id anyway).
+    const tempId = `optimistic-${crypto.randomUUID()}`;
     const nowIso = new Date().toISOString();
     onOptimisticAdd({
       id: tempId,
@@ -118,26 +169,14 @@ export function Composer({
     }
   };
 
-  /**
-   * M6: file attachment (context.md §10.4's attachment icon; implementation
-   * -plan.md M6's "Composer attachment picker wired to
-   * upload-outbound.ts"). Same optimistic-add / server-ack / failed shape
-   * as handleSend above, sent as `multipart/form-data` instead of JSON
-   * (src/app/api/conversations/[id]/messages/route.ts dispatches on
-   * Content-Type). The optimistic row gets an instant local preview via
-   * `URL.createObjectURL` so the agent sees the actual image/file right
-   * away rather than a bare placeholder — `onServerAck` replaces it
-   * wholesale with the server's real row (whose `media.url` is the
-   * authenticated `/api/media/:id` route) once accepted.
-   */
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file later
+    e.target.value = ""; 
     if (!file || sending || !isWindowOpen) return;
 
     setSending(true);
 
-    const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tempId = `optimistic-${crypto.randomUUID()}`;
     const nowIso = new Date().toISOString();
     const previewUrl = URL.createObjectURL(file);
     onOptimisticAdd({
@@ -170,10 +209,6 @@ export function Composer({
       if (res.ok) {
         const data = (await res.json()) as { message: MessageDTO };
         onServerAck(tempId, data.message);
-        // The real row (server-rendered, /api/media/:id-backed url) has
-        // replaced this optimistic one now — safe to release the local
-        // blob URL. Left alone on failure/error so the still-visible
-        // FAILED row keeps its preview image instead of breaking.
         URL.revokeObjectURL(previewUrl);
       } else {
         const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
@@ -186,13 +221,107 @@ export function Composer({
     }
   };
 
+  const handleTemplateSend = async (templateName: string, languageCode: string, variables: Record<string, string>): Promise<void> => {
+    if (sending) return;
+    setSending(true);
+
+    const tempId = `optimistic-${crypto.randomUUID()}`;
+    const nowIso = new Date().toISOString();
+    onOptimisticAdd({
+      id: tempId,
+      conversationId,
+      provider: "",
+      providerMessageId: null,
+      direction: "OUTBOUND",
+      type: "TEMPLATE",
+      body: null,
+      mediaId: null,
+      templateName,
+      status: "PENDING",
+      errorCode: null,
+      errorMessage: null,
+      metaTimestamp: nowIso,
+      createdAt: nowIso,
+      media: null,
+    });
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "template", templateName, languageCode, variables }),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as { message: MessageDTO };
+        onServerAck(tempId, data.message);
+      } else {
+        const data = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+        onFailed(tempId, data?.error ?? "please try again.");
+      }
+    } catch {
+      onFailed(tempId, "check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
   if (!isWindowOpen) {
-    return <ClosedWindowComposer />;
+    return <ClosedWindowComposer channelId={channelId} onSend={handleTemplateSend} disabled={sending} />;
   }
 
   return (
-    <div>
+    <div style={{ position: "relative" }}>
       <WindowCountdown closesAt={closesAt} />
+      
+      {/* Quick Replies Popup */}
+      {showQuickReplies && filteredQuickReplies.length > 0 && (
+        <div style={{
+          position: "absolute",
+          bottom: "100%",
+          left: "0.75rem",
+          marginBottom: "0.5rem",
+          background: "#111113",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: "8px",
+          boxShadow: "0 -4px 24px rgba(0,0,0,0.4)",
+          width: "300px",
+          maxHeight: "250px",
+          overflowY: "auto",
+          zIndex: 50,
+          color: "#fff",
+          fontFamily: "'Inter', sans-serif"
+        }}>
+          <div style={{ padding: "0.5rem 0.75rem", fontSize: "0.75em", opacity: 0.5, borderBottom: "1px solid rgba(255,255,255,0.05)", textTransform: "uppercase", letterSpacing: "1px" }}>
+            Quick Replies
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {filteredQuickReplies.map((qr, idx) => (
+              <li 
+                key={qr.id}
+                onClick={() => applyQuickReply(qr)}
+                onMouseEnter={() => setSelectedIndex(idx)}
+                style={{
+                  padding: "0.75rem",
+                  cursor: "pointer",
+                  background: selectedIndex === idx ? "rgba(99, 102, 241, 0.2)" : "transparent",
+                  borderLeft: selectedIndex === idx ? "3px solid #818cf8" : "3px solid transparent",
+                  transition: "background 0.1s"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ fontSize: "0.85em", color: "#818cf8" }}>/{qr.shortcut}</strong>
+                </div>
+                <div style={{ fontSize: "0.85em", opacity: 0.8, marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {qr.body}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div
         style={{
           borderTop: "1px solid var(--border, #e5e5e5)",
@@ -204,23 +333,21 @@ export function Composer({
       >
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          placeholder="Type a message..."
+          onChange={handleTextChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a message... (Press '/' for quick replies)"
           rows={2}
           disabled={sending}
           style={{
             flex: 1,
             resize: "none",
-            padding: "0.5rem",
+            padding: "0.75rem",
             borderRadius: "0.5rem",
-            border: "1px solid var(--border, #e5e5e5)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            background: "rgba(255,255,255,0.02)",
+            color: "#fff",
             font: "inherit",
+            boxShadow: "inset 0 2px 4px rgba(0,0,0,0.1)"
           }}
         />
         <input
@@ -236,10 +363,32 @@ export function Composer({
           disabled={sending}
           title="Attach a file"
           aria-label="Attach a file"
+          style={{
+            padding: "0.75rem",
+            background: "rgba(255,255,255,0.05)",
+            border: "none",
+            borderRadius: "0.5rem",
+            cursor: "pointer",
+            fontSize: "1.2em"
+          }}
         >
           📎
         </button>
-        <button type="button" onClick={() => void handleSend()} disabled={sending || !text.trim()}>
+        <button 
+          type="button" 
+          onClick={() => void handleSend()} 
+          disabled={sending || !text.trim()}
+          style={{
+            padding: "0.75rem 1.5rem",
+            background: (sending || !text.trim()) ? "rgba(255,255,255,0.1)" : "linear-gradient(135deg, #6366f1, #a855f7)",
+            color: (sending || !text.trim()) ? "rgba(255,255,255,0.3)" : "#fff",
+            border: "none",
+            borderRadius: "0.5rem",
+            fontWeight: 600,
+            cursor: (sending || !text.trim()) ? "not-allowed" : "pointer",
+            transition: "all 0.2s"
+          }}
+        >
           {sending ? "Sending..." : "Send"}
         </button>
       </div>
@@ -247,25 +396,43 @@ export function Composer({
   );
 }
 
-/**
- * Closed-window state (context.md §4.1/§10.4): free text is unavailable,
- * only an approved template could reopen this conversation to a free-form
- * reply. Templates don't exist as a model or a send path until M7 — this
- * button is a disabled, clearly-labeled placeholder, not a working picker,
- * per this milestone's explicit non-goal ("don't half-build M7's scope").
- */
-function ClosedWindowComposer() {
+function ClosedWindowComposer({
+  channelId,
+  onSend,
+  disabled,
+}: {
+  channelId: string;
+  onSend: (templateName: string, languageCode: string, variables: Record<string, string>) => void;
+  disabled: boolean;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+
+  if (showPicker) {
+    return (
+      <div style={{ padding: "0.75rem", borderTop: "1px solid var(--border, #e5e5e5)" }}>
+        <TemplatePicker 
+          channelId={channelId} 
+          onSelect={(name, lang, vars) => {
+            setShowPicker(false);
+            onSend(name, lang, vars);
+          }}
+          onCancel={() => setShowPicker(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
-        borderTop: "1px solid var(--border, #e5e5e5)",
+        borderTop: "1px solid rgba(255,255,255,0.1)",
         padding: "0.75rem",
         display: "flex",
         flexDirection: "column",
         gap: "0.5rem",
       }}
     >
-      <p style={{ margin: 0, fontSize: "0.9em", opacity: 0.8 }}>
+      <p style={{ margin: 0, fontSize: "0.9em", opacity: 0.6, color: "#fff" }}>
         The 24-hour reply window has closed. You can only send an approved template message.
       </p>
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -277,14 +444,30 @@ function ClosedWindowComposer() {
           style={{
             flex: 1,
             resize: "none",
-            padding: "0.5rem",
+            padding: "0.75rem",
             borderRadius: "0.5rem",
-            border: "1px solid var(--border, #e5e5e5)",
+            border: "1px solid rgba(255,255,255,0.05)",
+            background: "rgba(0,0,0,0.2)",
+            color: "#fff",
             font: "inherit",
-            opacity: 0.6,
+            opacity: 0.4,
           }}
         />
-        <button type="button" disabled title="Template sending arrives in a later milestone">
+        <button 
+          type="button" 
+          onClick={() => setShowPicker(true)} 
+          disabled={disabled} 
+          title="Send a template message"
+          style={{
+            padding: "0.75rem 1.5rem",
+            background: "rgba(255,255,255,0.1)",
+            color: "#fff",
+            border: "none",
+            borderRadius: "0.5rem",
+            fontWeight: 600,
+            cursor: disabled ? "not-allowed" : "pointer"
+          }}
+        >
           Send a template
         </button>
       </div>
@@ -292,14 +475,6 @@ function ClosedWindowComposer() {
   );
 }
 
-/**
- * "Window closes in Xh Ym" (context.md §10.4). `closesAt` is a fixed
- * absolute instant the server computed from the real `lastInboundAt` — the
- * countdown below re-renders it every 30s purely to keep the displayed
- * text fresh as real time passes; it never re-derives the open/closed
- * boolean itself (that stays exactly what the server said until the page's
- * data is refetched), so this is pure display, not enforcement.
- */
 function WindowCountdown({ closesAt }: { closesAt: string | null }) {
   const [now, setNow] = useState(() => new Date());
 
@@ -313,7 +488,7 @@ function WindowCountdown({ closesAt }: { closesAt: string | null }) {
   if (remainingMs <= 0) return null;
 
   return (
-    <p style={{ margin: "0 0.75rem", fontSize: "0.8em", opacity: 0.6 }}>
+    <p style={{ margin: "0 0.75rem", fontSize: "0.8em", color: "#f59e0b", fontWeight: 500, position: "absolute", top: "-1.5rem", left: "0" }}>
       Window closes in {formatDurationShort(remainingMs)}
     </p>
   );

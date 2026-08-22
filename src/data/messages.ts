@@ -101,6 +101,17 @@ export interface CreatePendingOutboundMessageInput {
    * inbound media message, whose mediaId is null until the async
    * download-and-store pipeline links it later). */
   mediaId?: string | null;
+  /** M7: set for a template send — src/services/messages/send-message.ts's
+   * sendTemplateMessage() has already verified the template exists and is
+   * APPROVED before this call. `templatePayload` carries both the
+   * languageCode actually used and the substituted variables (not just
+   * variables alone) so send-message.consumer.ts's send-time re-check
+   * (context.md §8.4: "never send a template whose local status is not
+   * APPROVED... check at send time, not just at selection time") can look
+   * the exact same template row back up later, in a different process,
+   * without a separate DB column for language. */
+  templateName?: string | null;
+  templatePayload?: Prisma.InputJsonValue | typeof Prisma.JsonNull;
   sentByUserId: string;
   metaTimestamp?: Date;
 }
@@ -127,6 +138,8 @@ export async function createPendingOutboundMessage(
       type: input.type,
       body: input.body ?? null,
       mediaId: input.mediaId ?? null,
+      templateName: input.templateName ?? null,
+      templatePayload: input.templatePayload,
       status: "PENDING",
       sentByUserId: input.sentByUserId,
       metaTimestamp: input.metaTimestamp ?? new Date(),
@@ -282,13 +295,14 @@ export interface MessageCursor {
 export async function listMessagesPage(
   organizationId: string,
   conversationId: string,
-  opts: { limit: number; cursor?: MessageCursor },
+  opts: { limit: number; cursor?: MessageCursor; search?: string },
 ): Promise<{ items: Message[]; nextCursor: string | null }> {
   const take = opts.limit + 1;
   const rows = await prisma.message.findMany({
     where: {
       organizationId,
       conversationId,
+      ...(opts.search ? { body: { contains: opts.search, mode: "insensitive" } } : {}),
       ...(opts.cursor
         ? {
             OR: [

@@ -3,6 +3,7 @@ import type { SendMessageJobData } from "@/queue/queues";
 import { getMessageById, markMessageFailed, markMessageSent } from "@/data/messages";
 import { getConversationWithContact, type ConversationWithContact } from "@/data/conversations";
 import { getMediaById } from "@/data/media";
+import { getTemplateByName } from "@/data/templates";
 import { getWhatsAppProvider } from "@/providers/factory";
 import { uploadStoredMediaToProvider } from "@/services/media/upload-outbound";
 import type { SendResult } from "@/providers/types";
@@ -104,6 +105,20 @@ export async function processSendMessageJob(data: SendMessageJobData): Promise<v
       to: conversation.contact.waId,
       body: message.body ?? "",
     });
+  } else if (message.type === "TEMPLATE") {
+    const templateResult = await sendTemplateViaProvider(organizationId, conversation, message);
+    if (!templateResult.ok) {
+      await markMessageFailed(organizationId, messageId, templateResult.code, templateResult.message);
+      logger.error("send-message job: terminal template send failure — marked FAILED", {
+        organizationId,
+        correlationId,
+        messageId,
+        errorCode: templateResult.code,
+      });
+      await publishUpdatedStatus(organizationId, message.conversationId, messageId, correlationId);
+      return;
+    }
+    result = templateResult.result;
   } else {
     const mediaResult = await sendMediaViaProvider(organizationId, conversation, message);
     if (!mediaResult.ok) {
@@ -250,6 +265,76 @@ async function sendMediaViaProvider(
     to: conversation.contact.waId,
     media: mediaRef,
     caption: message.body ?? undefined,
+  });
+
+  return { ok: true, result };
+}
+
+type TemplateSendOutcome = { ok: true; result: SendResult } | { ok: false; code: string; message: string };
+
+/**
+ * M7: the template counterpart of sendMediaViaProvider above. `message.templatePayload`
+ * carries `{ languageCode, variables }` (src/services/messages/send-message.ts's
+ * sendTemplateMessage doc comment explains why languageCode travels here
+ * instead of a dedicated Message column).
+ *
+ * This is send-time re-check #2 of 2 for context.md §8.4's "never send a
+ * template whose local status is not APPROVED... check at send time, not
+ * just at selection time": sendTemplateMessage already checked APPROVED
+ * once before enqueueing, but Meta's own sync (or a paused/rejected status
+ * landing) could flip it in the gap between that check and this job
+ * actually running — so the exact same check happens again here,
+ * immediately before the real provider.sendTemplate() call.
+ */
+async function sendTemplateViaProvider(
+  organizationId: string,
+  conversation: ConversationWithContact,
+  message: Message,
+): Promise<TemplateSendOutcome> {
+  if (!message.templateName || !message.templatePayload) {
+    return {
+      ok: false,
+      code: "MISSING_TEMPLATE_DATA",
+      message: "Template name or payload is missing.",
+    };
+  }
+
+  const payload = message.templatePayload as { languageCode?: string; variables?: Record<string, string> };
+  if (!payload.languageCode || !payload.variables) {
+    return {
+      ok: false,
+      code: "MISSING_TEMPLATE_DATA",
+      message: "Template language or variables are missing.",
+    };
+  }
+
+  const template = await getTemplateByName(
+    organizationId,
+    conversation.channel.id,
+    message.templateName,
+    payload.languageCode,
+  );
+  if (!template) {
+    return {
+      ok: false,
+      code: "TEMPLATE_NOT_FOUND",
+      message: "This template could no longer be found.",
+    };
+  }
+  if (template.status !== "APPROVED") {
+    return {
+      ok: false,
+      code: "TEMPLATE_NOT_APPROVED",
+      message: `This template is no longer approved (status: ${template.status}).`,
+    };
+  }
+
+  const result = await getWhatsAppProvider().sendTemplate({
+    channelId: conversation.channel.id,
+    to: conversation.contact.waId,
+    templateName: message.templateName,
+    languageCode: payload.languageCode,
+    variables: payload.variables,
   });
 
   return { ok: true, result };

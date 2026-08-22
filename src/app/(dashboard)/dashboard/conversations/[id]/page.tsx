@@ -86,6 +86,7 @@ export default async function ConversationThreadPage({
           </h1>
           <ThreadView
             conversationId={conversationDTO.id}
+            channelId={conversationDTO.channel.id}
             initialMessagesNewestFirst={initialMessagesNewestFirst}
             initialOlderCursor={nextCursor}
             initialIsWindowOpen={conversationDTO.isWindowOpen}

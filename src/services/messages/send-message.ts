@@ -7,6 +7,7 @@ import { isWindowOpen } from "@/services/window";
 import { logger, newCorrelationId } from "@/lib/logging/logger";
 import { storeOutboundMedia } from "@/services/media/upload-outbound";
 import { mediaKindForMime, messageTypeForMediaKind, validateOutboundMedia } from "@/services/media/limits";
+import { getTemplateByName } from "@/data/templates";
 
 /**
  * The outbound-send sequence (architecture.md §7 / context.md §8.2):
@@ -61,7 +62,8 @@ export type SendMessageResult =
   | { ok: true; message: Message }
   | { ok: false; status: 404; error: string }
   | { ok: false; status: 409; code: "WINDOW_CLOSED"; error: string }
-  | { ok: false; status: 400; code: "INVALID_MEDIA"; error: string };
+  | { ok: false; status: 400; code: "INVALID_MEDIA"; error: string }
+  | { ok: false; status: 409; code: "TEMPLATE_NOT_APPROVED"; error: string };
 
 export interface SendTextMessageOpts {
   correlationId?: string;
@@ -252,6 +254,108 @@ export async function sendMediaMessage(
     conversationId,
     messageId: message.id,
     mediaId: media.id,
+  });
+
+  return { ok: true, message };
+}
+
+export interface SendTemplateMessageInput {
+  organizationId: string;
+  conversationId: string;
+  userId: string;
+  templateName: string;
+  languageCode: string;
+  variables: Record<string, string>;
+}
+
+export async function sendTemplateMessage(
+  input: SendTemplateMessageInput,
+  opts: SendTextMessageOpts = {},
+): Promise<SendMessageResult> {
+  const { organizationId, conversationId, userId, templateName, languageCode, variables } = input;
+  const correlationId = opts.correlationId ?? newCorrelationId();
+
+  logger.info("send-template-message: start", {
+    organizationId,
+    correlationId,
+    conversationId,
+    userId,
+    templateName,
+  });
+
+  const conversation = await getConversationById(organizationId, conversationId);
+  if (!conversation) {
+    logger.info("send-template-message: conversation not found for this organization", {
+      organizationId,
+      correlationId,
+      conversationId,
+    });
+    return { ok: false, status: 404, error: "Conversation not found" };
+  }
+
+  // Templates bypass the window check (context.md §4.1: "sending a template
+  // does not open a window... templates are the one thing Meta allows
+  // outside the window") — skipWindowCheck is implied true for this path,
+  // never read from opts.
+
+  // Send-time re-check #1 of 2 (context.md §8.4: "never send a template
+  // whose local status is not APPROVED... check at send time, not just at
+  // selection time"). This is the selection/enqueue-time half of that
+  // check; src/worker/consumers/send-message.consumer.ts repeats it
+  // immediately before the actual provider.sendTemplate() call, since
+  // Meta's own sync (or a paused/rejected status arriving) could flip the
+  // template between this request and the job actually running.
+  const template = await getTemplateByName(organizationId, conversation.channelId, templateName, languageCode);
+  if (!template) {
+    logger.info("send-template-message: template not found", {
+      organizationId,
+      correlationId,
+      conversationId,
+      templateName,
+    });
+    return { ok: false, status: 404, error: "Template not found" };
+  }
+  if (template.status !== "APPROVED") {
+    logger.info("send-template-message: rejected, template not APPROVED", {
+      organizationId,
+      correlationId,
+      conversationId,
+      templateName,
+      status: template.status,
+    });
+    return {
+      ok: false,
+      status: 409,
+      code: "TEMPLATE_NOT_APPROVED",
+      error: `This template is not approved for sending (status: ${template.status}).`,
+    };
+  }
+
+  const message = await createPendingOutboundMessage(organizationId, {
+    conversationId,
+    provider: getWhatsAppProvider().name,
+    type: "TEMPLATE",
+    body: null,
+    templateName,
+    // Carries languageCode alongside the variables — see
+    // CreatePendingOutboundMessageInput's own doc comment (src/data/
+    // messages.ts) for why: the worker's send-time re-check needs the
+    // exact same (name, language) pair to look the template back up,
+    // and there's no separate Message column for language.
+    templatePayload: { languageCode, variables },
+    sentByUserId: userId,
+  });
+
+  await getSendMessageQueue().add(QUEUE_NAMES.sendMessage, {
+    organizationId,
+    messageId: message.id,
+  });
+
+  logger.info("send-template-message: PENDING row created, job enqueued", {
+    organizationId,
+    correlationId,
+    conversationId,
+    messageId: message.id,
   });
 
   return { ok: true, message };
