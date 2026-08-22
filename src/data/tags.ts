@@ -22,6 +22,17 @@ export async function updateTag(organizationId: string, id: string, name?: strin
   });
 }
 
+export async function getContactTags(organizationId: string, contactId: string): Promise<Tag[]> {
+  const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId } });
+  if (!contact) return [];
+
+  const contactTags = await prisma.contactTag.findMany({
+    where: { contactId, tag: { organizationId } },
+    include: { tag: true },
+  });
+  return contactTags.map((ct) => ct.tag);
+}
+
 export async function addTagToContact(organizationId: string, contactId: string, tagId: string): Promise<void> {
   const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId } });
   const tag = await prisma.tag.findFirst({ where: { id: tagId, organizationId } });

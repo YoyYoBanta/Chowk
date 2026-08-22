@@ -1,6 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireApiSession } from "@/lib/auth/guard";
-import { addTagToContact } from "@/data/tags";
+import { addTagToContact, getContactTags } from "@/data/tags";
+
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const auth = await requireApiSession(request);
+  if (!auth.session) return auth.response;
+
+  const { id } = await context.params;
+  const tags = await getContactTags(auth.session.organizationId, id);
+  return NextResponse.json({ tags });
+}
 
 export async function POST(
   request: NextRequest,

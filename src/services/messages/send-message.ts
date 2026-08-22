@@ -8,6 +8,7 @@ import { logger, newCorrelationId } from "@/lib/logging/logger";
 import { storeOutboundMedia } from "@/services/media/upload-outbound";
 import { mediaKindForMime, messageTypeForMediaKind, validateOutboundMedia } from "@/services/media/limits";
 import { getTemplateByName } from "@/data/templates";
+import { validateTemplateVariables } from "@/lib/templates/variables";
 
 /**
  * The outbound-send sequence (architecture.md §7 / context.md §8.2):
@@ -63,7 +64,8 @@ export type SendMessageResult =
   | { ok: false; status: 404; error: string }
   | { ok: false; status: 409; code: "WINDOW_CLOSED"; error: string }
   | { ok: false; status: 400; code: "INVALID_MEDIA"; error: string }
-  | { ok: false; status: 409; code: "TEMPLATE_NOT_APPROVED"; error: string };
+  | { ok: false; status: 409; code: "TEMPLATE_NOT_APPROVED"; error: string }
+  | { ok: false; status: 400; code: "TEMPLATE_VARIABLE_MISMATCH"; error: string; missing: string[] };
 
 export interface SendTextMessageOpts {
   correlationId?: string;
@@ -328,6 +330,35 @@ export async function sendTemplateMessage(
       status: 409,
       code: "TEMPLATE_NOT_APPROVED",
       error: `This template is not approved for sending (status: ${template.status}).`,
+    };
+  }
+
+  // Variable-count-mismatch check: a placeholder in the template body with
+  // no non-empty value supplied would either send the literal "{{n}}" text
+  // through (Baileys) or get rejected by Meta outright (Phase B) — reject
+  // it here, before the PENDING row, same "nothing written on rejection"
+  // discipline as the window/APPROVED checks above.
+  const templateBody =
+    typeof template.components === "object" &&
+    template.components !== null &&
+    "body" in template.components &&
+    typeof (template.components as { body: unknown }).body === "string"
+      ? (template.components as { body: string }).body
+      : "";
+  const variableCheck = validateTemplateVariables(templateBody, variables);
+  if (!variableCheck.ok) {
+    logger.info("send-template-message: rejected, missing template variables", {
+      organizationId,
+      correlationId,
+      conversationId,
+      templateName,
+    });
+    return {
+      ok: false,
+      status: 400,
+      code: "TEMPLATE_VARIABLE_MISMATCH",
+      error: `Missing a value for template placeholder(s): ${variableCheck.missing.join(", ")}`,
+      missing: variableCheck.missing,
     };
   }
 

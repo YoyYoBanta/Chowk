@@ -54,6 +54,8 @@ import { processDownloadMediaJob } from "@/worker/consumers/download-media.consu
 import { listOrganizations } from "@/data/organizations";
 import { listChannelsInOrg } from "@/data/channels";
 import { getWhatsAppProvider } from "@/providers/factory";
+import { startTemplateSyncScheduler } from "@/worker/scheduler";
+import { syncTemplatesForChannel } from "@/services/templates/sync";
 
 function startIngestInboundWorker(): Worker<IngestInboundJobData> {
   const worker = new Worker<IngestInboundJobData>(
@@ -169,6 +171,15 @@ async function connectActiveChannels(): Promise<string[]> {
       try {
         await provider.connect(channel);
         connectedChannelIds.push(channel.id);
+        // "every 15 minutes and on channel connect" (implementation-plan.md's
+        // M7 task list) — the periodic half lives in scheduler.ts; this is
+        // the on-connect half. Best-effort: a sync failure must not be
+        // treated as a connect failure.
+        try {
+          await syncTemplatesForChannel(channel.organizationId, channel.id);
+        } catch (error) {
+          console.error(`[worker] template sync on connect failed for channel ${channel.id}:`, error);
+        }
       } catch (error) {
         console.error(`[worker] failed to connect channel ${channel.id}:`, error);
       }
@@ -188,10 +199,12 @@ async function main(): Promise<void> {
   const downloadMediaWorker = startDownloadMediaWorker();
 
   const connectedChannelIds = await connectActiveChannels();
+  const templateSyncScheduler = startTemplateSyncScheduler();
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[worker] received ${signal}, shutting down`);
     const provider = getWhatsAppProvider();
+    templateSyncScheduler.stop();
     await Promise.all([
       ingestInboundWorker.close(),
       sendMessageWorker.close(),

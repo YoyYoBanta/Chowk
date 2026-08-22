@@ -107,6 +107,8 @@ model Contact {
 
   organization   Organization   @relation(fields: [organizationId], references: [id])
   conversations  Conversation[]
+  tags           ContactTag[]
+  notes          Note[]
 
   @@unique([organizationId, waId])
   @@index([organizationId])
@@ -291,12 +293,22 @@ model Tag {
   name           String
   color          String?
 
+  contacts       ContactTag[]
+
   @@unique([organizationId, name])
 }
 
+// Real FKs with onDelete: Cascade (not present when this model was first
+// added) — a ContactTag row has no meaning once its Contact or Tag is gone,
+// and without these, deleting either left orphaned join rows with no
+// referential integrity at all.
 model ContactTag {
   contactId String
   tagId     String
+
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
   @@id([contactId, tagId])
 }
 
@@ -308,6 +320,8 @@ model Note {
   body           String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  contact        Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([contactId])
 }

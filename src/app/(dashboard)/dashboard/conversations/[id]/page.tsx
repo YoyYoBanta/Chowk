@@ -44,6 +44,7 @@ export default async function ConversationThreadPage({
     isWindowOpen: windowState.isOpen,
     closesAt: windowState.closesAt ? windowState.closesAt.toISOString() : null,
     remainingMs: windowState.remainingMs,
+    assignedUserId: conversation.assignedUserId,
     channel: conversation.channel,
     contact: {
       id: conversation.contact.id,
@@ -51,6 +52,7 @@ export default async function ConversationThreadPage({
       displayName: conversation.contact.displayName,
       waId: conversation.contact.waId,
       isBlocked: conversation.contact.isBlocked,
+      customFields: conversation.contact.customFields as Record<string, unknown>,
     },
   };
 

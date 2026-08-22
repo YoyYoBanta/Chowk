@@ -88,6 +88,10 @@ export interface ConversationDetailDTO {
   isWindowOpen: boolean;
   closesAt: string | null;
   remainingMs: number | null;
+  /** Already present on the raw Conversation row `getConversationWithContact`
+   * returns (M8's schema) — this DTO just didn't type it yet, so the
+   * contact panel had no way to know who a conversation was assigned to. */
+  assignedUserId: string | null;
   channel: { id: string; displayName: string; provider: string };
   contact: {
     id: string;
@@ -95,6 +99,9 @@ export interface ConversationDetailDTO {
     displayName: string | null;
     waId: string;
     isBlocked: boolean;
+    /** Same story as assignedUserId above — already on the wire via
+     * `include: { contact: true }`, just not in this DTO's type. */
+    customFields: Record<string, unknown>;
   };
 }
 

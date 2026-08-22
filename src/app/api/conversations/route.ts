@@ -26,7 +26,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const auth = await requireApiSession(request);
   if (!auth.session) return auth.response;
-  const { organizationId } = auth.session;
+  const { organizationId, userId } = auth.session;
 
   logger.info("request start", { organizationId, correlationId, route });
 
@@ -44,7 +44,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const statusParam = url.searchParams.get("status");
   const status: ConversationStatus | undefined =
     statusParam === "OPEN" || statusParam === "DONE" ? statusParam : undefined;
-  const assignedUserId = url.searchParams.has("assignedUserId") ? url.searchParams.get("assignedUserId") : undefined;
+
+  // "unassigned"/"me" are UI sentinel values (conversation-list.tsx's
+  // filter chips), not real user ids — translate them here rather than in
+  // the data layer, since "me" only means anything relative to the
+  // requesting session. Any other value passes through as a literal
+  // assignedUserId (a real id, for a future admin-driven reassignment
+  // filter). Fixes a real bug: before this, both filters silently matched
+  // zero conversations, since no row's assignedUserId is ever literally
+  // the string "unassigned" or "me".
+  const assignedUserIdParam = url.searchParams.get("assignedUserId");
+  const assignedUserId: string | null | undefined =
+    assignedUserIdParam === "unassigned" ? null
+    : assignedUserIdParam === "me" ? userId
+    : assignedUserIdParam ?? undefined;
   const channelId = url.searchParams.get("channelId") || undefined;
   const tagId = url.searchParams.get("tagId") || undefined;
   const search = url.searchParams.get("search") || undefined;

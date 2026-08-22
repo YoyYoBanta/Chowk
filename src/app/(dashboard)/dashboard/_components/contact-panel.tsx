@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { ConversationStatus } from "@prisma/client";
+import type { ConversationStatus, FieldType } from "@prisma/client";
 import type { ConversationDetailDTO } from "../../_lib/types";
 
 /** M8: client-side shape of one row from GET /api/contacts/:id/notes. */
@@ -9,6 +9,26 @@ interface NoteDTO {
   id: string;
   body: string;
   createdAt: string;
+}
+
+interface TagDTO {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+interface CustomFieldDefDTO {
+  id: string;
+  key: string;
+  label: string;
+  type: FieldType;
+  options: string[] | null;
+}
+
+interface UserDTO {
+  id: string;
+  name: string;
+  email: string;
 }
 
 export function ContactPanel({ conversation }: { conversation: ConversationDetailDTO }) {
@@ -20,14 +40,49 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState(conversation.status);
 
-  // In a real app we'd fetch users, tags, custom fields here.
-  // For now, we stub the options and focus on the UI to demonstrate the CRM layer capabilities.
+  const [contactTags, setContactTags] = useState<TagDTO[]>([]);
+  const [allTags, setAllTags] = useState<TagDTO[]>([]);
+  const [tagPickerValue, setTagPickerValue] = useState("");
+
+  const [fieldDefs, setFieldDefs] = useState<CustomFieldDefDTO[]>([]);
+  const [customFields, setCustomFields] = useState<Record<string, unknown>>(contact.customFields ?? {});
+
+  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [assignedUserId, setAssignedUserId] = useState<string | null>(conversation.assignedUserId);
 
   useEffect(() => {
     fetch(`/api/contacts/${contact.id}/notes`)
       .then(res => res.json())
       .then(data => {
         if (data.notes) setNotes(data.notes);
+      })
+      .catch(console.error);
+
+    fetch(`/api/contacts/${contact.id}/tags`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.tags) setContactTags(data.tags);
+      })
+      .catch(console.error);
+
+    fetch("/api/tags")
+      .then(res => res.json())
+      .then(data => {
+        if (data.tags) setAllTags(data.tags);
+      })
+      .catch(console.error);
+
+    fetch("/api/custom-field-definitions")
+      .then(res => res.json())
+      .then(data => {
+        if (data.definitions) setFieldDefs(data.definitions);
+      })
+      .catch(console.error);
+
+    fetch("/api/users")
+      .then(res => res.json())
+      .then(data => {
+        if (data.users) setUsers(data.users);
       })
       .catch(console.error);
   }, [contact.id]);
@@ -57,6 +112,44 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
+    });
+  };
+
+  const handleAssigneeChange = async (newAssignedUserId: string) => {
+    const value = newAssignedUserId === "" ? null : newAssignedUserId;
+    setAssignedUserId(value);
+    await fetch(`/api/conversations/${conversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignedUserId: value }),
+    });
+  };
+
+  const handleAddTag = async (tagId: string) => {
+    if (!tagId || contactTags.some(t => t.id === tagId)) return;
+    const tag = allTags.find(t => t.id === tagId);
+    if (!tag) return;
+    setContactTags([...contactTags, tag]);
+    setTagPickerValue("");
+    await fetch(`/api/contacts/${contact.id}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tagId }),
+    });
+  };
+
+  const handleRemoveTag = async (tagId: string) => {
+    setContactTags(contactTags.filter(t => t.id !== tagId));
+    await fetch(`/api/contacts/${contact.id}/tags/${tagId}`, { method: "DELETE" });
+  };
+
+  const handleCustomFieldChange = async (key: string, value: string) => {
+    const next = { ...customFields, [key]: value };
+    setCustomFields(next);
+    await fetch(`/api/contacts/${contact.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customFields: next }),
     });
   };
 
@@ -154,23 +247,141 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
               </select>
             </div>
 
-            {/* Tags — UI wiring to the real /api/contacts/:id/tags routes
-                (already implemented, see src/app/api/contacts/[id]/tags/)
-                is still open; this panel doesn't fetch or render real tags
-                yet. An honest placeholder, not fabricated sample data — see
-                the same "none yet" convention M3's read-only panel used
-                before tags/notes existed at all. */}
+            {/* Assignment — the "Mine"/"Unassigned" list filters already
+                existed with no UI anywhere to actually assign a
+                conversation to someone. Wired to the same PATCH
+                /api/conversations/:id the status select above uses. */}
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Tags</label>
-              <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.5 }}>Not wired up in this panel yet.</p>
+              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Assigned to</label>
+              <select
+                value={assignedUserId ?? ""}
+                onChange={(e) => void handleAssigneeChange(e.target.value)}
+                style={{
+                  padding: "0.75rem",
+                  borderRadius: "8px",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  color: "#fff",
+                  outline: "none",
+                  cursor: "pointer"
+                }}
+              >
+                <option value="">Unassigned</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
             </div>
 
-            {/* Custom Fields — same gap as Tags above: the data layer and
-                API routes exist (src/data/custom-fields.ts), this panel
-                just doesn't read/render them yet. */}
+            {/* Tags — real data now: fetched from /api/contacts/:id/tags,
+                added/removed through the existing POST/DELETE routes. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Tags</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                {contactTags.map(tag => (
+                  <span
+                    key={tag.id}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "4px 10px",
+                      background: "rgba(99, 102, 241, 0.12)",
+                      border: "1px solid rgba(99, 102, 241, 0.25)",
+                      borderRadius: "14px",
+                      color: "#a5b4fc",
+                      fontSize: "0.85em",
+                    }}
+                  >
+                    {tag.name}
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveTag(tag.id)}
+                      aria-label={`Remove ${tag.name}`}
+                      style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: "0.9em", opacity: 0.7 }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {contactTags.length === 0 && (
+                  <span style={{ fontSize: "0.85em", opacity: 0.4 }}>No tags yet.</span>
+                )}
+              </div>
+              {allTags.length > 0 && (
+                <select
+                  value={tagPickerValue}
+                  onChange={(e) => void handleAddTag(e.target.value)}
+                  style={{
+                    padding: "0.6rem",
+                    borderRadius: "8px",
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    color: "#fff",
+                    outline: "none",
+                    cursor: "pointer"
+                  }}
+                >
+                  <option value="" disabled>Add a tag…</option>
+                  {allTags
+                    .filter(t => !contactTags.some(ct => ct.id === t.id))
+                    .map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                </select>
+              )}
+            </div>
+
+            {/* Custom Fields — real data now: definitions come from
+                /api/custom-field-definitions (org-wide), values live on
+                Contact.customFields (a plain Json column, keyed by
+                definition.key) and save through PATCH /api/contacts/:id. */}
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Custom Fields</label>
-              <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.5 }}>Not wired up in this panel yet.</p>
+              {fieldDefs.length === 0 ? (
+                <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.5 }}>No custom fields defined for this organization yet.</p>
+              ) : (
+                fieldDefs.map(def => (
+                  <div key={def.id} style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                    <label htmlFor={`cf-${def.key}`} style={{ fontSize: "0.75em", opacity: 0.6 }}>{def.label}</label>
+                    {def.type === "LIST" && def.options ? (
+                      <select
+                        id={`cf-${def.key}`}
+                        value={typeof customFields[def.key] === "string" ? (customFields[def.key] as string) : ""}
+                        onChange={(e) => void handleCustomFieldChange(def.key, e.target.value)}
+                        style={{
+                          padding: "0.6rem",
+                          borderRadius: "8px",
+                          background: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          color: "#fff",
+                          outline: "none",
+                        }}
+                      >
+                        <option value="">—</option>
+                        {def.options.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={`cf-${def.key}`}
+                        type={def.type === "NUMBER" ? "number" : def.type === "DATE" ? "date" : "text"}
+                        value={typeof customFields[def.key] === "string" || typeof customFields[def.key] === "number" ? String(customFields[def.key]) : ""}
+                        onChange={(e) => void handleCustomFieldChange(def.key, e.target.value)}
+                        style={{
+                          padding: "0.6rem",
+                          borderRadius: "8px",
+                          background: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          color: "#fff",
+                          outline: "none",
+                        }}
+                      />
+                    )}
+                  </div>
+                ))
+              )}
             </div>
 
           </div>

@@ -220,6 +220,67 @@ own established convention from M3's original read-only contact panel.
 
 ---
 
+## M7/M8 completion pass (2026-08-22)
+
+Follow-up to the fix-up above, per the user's explicit instruction to
+finish M7/M8's remaining "not done" items properly rather than leave them
+as a permanent partial state.
+
+### `ContactTag` gained real Prisma relations instead of bare scalar columns
+**Decision:** added `Contact.tags`/`Tag.contacts` back-relations and
+`ContactTag.contact`/`ContactTag.tag` forward relations, each
+`onDelete: Cascade`; `Note.contact` similarly.
+**Why:** the model as originally written (`contactId String; tagId
+String`, no `@relation` at all) had no FK constraint and no cascade —
+deleting a Contact or Tag left orphaned `ContactTag` rows with nothing
+enforcing referential integrity, and `include: { tag: true }` was simply
+impossible without a named relation. This surfaced immediately while
+wiring the contact panel's tag list (needed `getContactTags` to actually
+join through to `Tag`). New migration `20260822090816_m8_crm_relations`.
+
+### "Mine"/"Unassigned" filter translation lives in the route, not the data layer
+**Decision:** `GET /api/conversations` translates the UI's
+`assignedUserId=unassigned`/`=me` query values to `null`/the session's own
+`userId` before calling `listConversationsPage` — the data layer only ever
+sees a real user id or `null`, never a sentinel string.
+**Why:** `"me"` only means anything relative to the requesting session,
+which the data layer deliberately has no access to (organizationId-first,
+no session threading below the route layer). Putting the translation in
+the data layer would have meant passing the session's userId down through
+`opts` for no other reason, muddying a function whose contract is
+otherwise "just a filter value." This was also a real, live bug fix: both
+filters previously matched zero conversations, since no row's
+`assignedUserId` is ever literally the string `"unassigned"` or `"me"`.
+
+### Template variable-mismatch validation is request-time only, not duplicated at the Worker
+**Decision:** `validateTemplateVariables` (`src/lib/templates/variables.ts`)
+runs once, in `sendTemplateMessage`, before the PENDING row is written —
+unlike the APPROVED check, it is not repeated in the Worker's
+`sendTemplateViaProvider`.
+**Why:** the APPROVED check is duplicated because a template's approval
+status can genuinely change in the gap between request and Worker
+execution (a real race). A template's own `{{n}}` placeholders don't
+change between those two points — the values already got frozen into
+`Message.templatePayload` at request time — so re-validating the same
+frozen data at send time would catch nothing a request-time check didn't
+already catch. Not the same category of check as the window/APPROVED
+defense-in-depth precedent.
+
+### The 15-minute template sync scheduler lives in the Worker process, not a cron/serverless function
+**Decision:** `src/worker/scheduler.ts`'s `startTemplateSyncScheduler()` is
+a plain `setInterval` inside the same long-running Worker process that
+already holds the Baileys sockets and BullMQ consumers, started in
+`main()` and `.stop()`d on the same SIGINT/SIGTERM shutdown path.
+**Why:** matches architecture.md §3/§4's explicit statement that the
+Worker owns "scheduled jobs" alongside everything else — introducing a
+second process (a cron container, a serverless scheduled function) for
+one 15-minute sweep would be new infrastructure for something the
+existing process is already documented to own. Fires once immediately on
+boot (not just on the first 15-minute tick) so a Worker restart doesn't
+leave a stale template list for up to 15 minutes.
+
+---
+
 ## Persist the real phone number on connect (2026-08-22)
 
 ### `Channel.phoneNumber` is written from `sock.user` once Baileys reports `connection === "open"`, not left at its placeholder

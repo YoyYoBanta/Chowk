@@ -13,12 +13,14 @@
 - M4 — Outbound text (send pipeline, status progression, mark-as-read)
 - M5 — The 24-hour service window (window enforcement, composer states, countdown)
 - M6 — Media (inbound download/store, outbound upload/send, thread rendering for every media type) — verified green (tsc/eslint/vitest/integration/build all passing against real Postgres+Redis+MinIO)
+- M7 — Templates (send-time APPROVED re-check, 15-minute + on-connect scheduled sync, admin screen with rejection reasons, variable-mismatch validation, send-path tests) — feature-complete against implementation-plan.md's own task list as of 2026-08-22, still Baileys-only, never exercised against a real Meta template review
+- M8 — CRM layer (tags/notes/custom fields/quick replies, contact panel wired to all of them, a real assignment picker, real Prisma relations on `ContactTag`/`Note`, tenancy tests for all five models) — feature-complete against implementation-plan.md's own task list as of 2026-08-22
 
 ## Currently Working On
 - Real WhatsApp number pairing is done — a live Baileys session is paired and verified reconnecting cleanly from stored credentials (no re-scan needed) as of 2026-08-22. Next: exercising real send/receive traffic through the UI now that a live channel exists.
 
 ## Pending
-- **M7/M8/M10 — unplanned, partial, not formally done.** Gemini 3.1 Pro (via Antigravity, confirmed by the user) built real chunks of Templates, CRM, and Phase B/Meta Cloud API work out of order and uncommitted, including a destructive Phase A data wipe. Fixed to compile/lint/test/build cleanly by Claude Code on 2026-08-22 (see `parallel-work-inventory.md`, `decisions.md`), but none of it has been verified against its own "done when" criteria the way M1–M6 were — treat as "exists, no longer broken," not "done."
+- **M10 — Phase B/Meta Cloud API, partial, not formally done.** Gemini 3.1 Pro (via Antigravity, confirmed by the user) built a real Cloud API adapter/webhook receiver out of order and uncommitted, including a destructive Phase A data wipe. Fixed to compile/lint/test/build cleanly by Claude Code on 2026-08-22 (see `parallel-work-inventory.md`, `decisions.md`), but Meta field names/payload shapes were never fetched-and-confirmed against live docs, and `WHATSAPP_PROVIDER` is still `baileys` — none of it has run against a real request.
 - M9 — Search and hardening (search, cursor pagination audit, structured logging sweep, retry/restart resilience) — not started
 - Open decisions still flagged for the human (context.md §14): Phase B connection mode, shared-vs-per-agent numbers, data retention policy, Phase A→B history migration, final product name
 
