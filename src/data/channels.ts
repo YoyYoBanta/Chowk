@@ -70,6 +70,17 @@ export async function updateChannelStatus(
   });
 }
 
+export async function updateChannelPhoneNumber(
+  organizationId: string,
+  channelId: string,
+  phoneNumber: string,
+): Promise<void> {
+  await prisma.channel.updateMany({
+    where: { id: channelId, organizationId },
+    data: { phoneNumber },
+  });
+}
+
 export async function setChannelSessionRef(
   organizationId: string,
   channelId: string,

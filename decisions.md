@@ -217,3 +217,25 @@ at was judged worse than an honest "not yet" — matching this codebase's
 own established convention from M3's original read-only contact panel.
 **Worth doing properly later:** wire the panel to the real
 `/api/contacts/:id/tags` and custom-fields routes.
+
+---
+
+## Persist the real phone number on connect (2026-08-22)
+
+### `Channel.phoneNumber` is written from `sock.user` once Baileys reports `connection === "open"`, not left at its placeholder
+**Decision:** `handleConnectionUpdate()`'s open branch now decodes
+`sock.user.jid`/`sock.user.id` via Baileys' own `jidDecode()` and persists
+the digits through a new `updateChannelPhoneNumber()` (`src/data/channels.ts`)
+data function, alongside the existing in-memory `connectionStates` update.
+**Why:** `createChannel()` requires a `phoneNumber` at creation time, before
+any real number is known (seed data uses a `"000000000000"` placeholder) —
+nothing ever updated it afterward, so the DB/admin-facing value stayed wrong
+indefinitely even once a channel paired successfully and worked correctly in
+every functional sense. `sock.user` is only populated once the socket is
+actually open, making the `"open"` transition the first and only correct
+place to learn the real number.
+**Verified live**, not just compiled: restarted the Worker against the
+already-paired session (`channel cmt42u419000aaouh6gf9rl1n`, previously
+linked via Gemini's session) — reconnected using stored credentials with no
+QR re-scan required, and `Channel.phoneNumber` updated from the placeholder
+to the real `918360814577` on that connect.

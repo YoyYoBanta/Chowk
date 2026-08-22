@@ -4,6 +4,7 @@ import qrcodeTerminal from "qrcode-terminal";
 import makeWASocket, {
   DisconnectReason,
   downloadContentFromMessage,
+  jidDecode,
   type AnyMessageContent,
   type ConnectionState as BaileysConnectionState,
   type MessageUpsertType,
@@ -11,7 +12,7 @@ import makeWASocket, {
   type WAMessageUpdate,
   type WASocket,
 } from "@whiskeysockets/baileys";
-import { updateChannelStatus } from "@/data/channels";
+import { updateChannelStatus, updateChannelPhoneNumber } from "@/data/channels";
 import { findMessageByProviderMessageId } from "@/data/messages";
 import { getConversationWithContact } from "@/data/conversations";
 import { createTemplate, listTemplates, getTemplateByName } from "@/data/templates";
@@ -192,6 +193,16 @@ export class BaileysProvider implements WhatsAppProvider {
       this.reconnectAttempts.set(channel.id, 0);
       this.connectionStates.set(channel.id, { status: "connected" });
       console.log(`[baileys] channel ${channel.id} connected — session paired and live.`);
+
+      // sock.user is only populated once the socket is actually open — this
+      // is the first point the adapter learns the real paired number, so
+      // persist it here rather than leaving the placeholder value set at
+      // channel-creation time.
+      const sock = this.sockets.get(channel.id);
+      const decoded = jidDecode(sock?.user?.jid ?? sock?.user?.id);
+      if (decoded?.user) {
+        void updateChannelPhoneNumber(channel.organizationId, channel.id, decoded.user);
+      }
       return;
     }
 

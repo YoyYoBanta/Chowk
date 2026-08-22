@@ -15,7 +15,7 @@
 - M6 — Media (inbound download/store, outbound upload/send, thread rendering for every media type) — verified green (tsc/eslint/vitest/integration/build all passing against real Postgres+Redis+MinIO)
 
 ## Currently Working On
-- Getting a real WhatsApp number paired for live testing — boot-time channel-connect loop + `npm run activate-channel` CLI + QR-code-in-terminal pairing exist; not yet actually paired against a real phone (and the local Phase A data/session that would have supported this was wiped by the M10 work below, before it was identified).
+- Real WhatsApp number pairing is done — a live Baileys session is paired and verified reconnecting cleanly from stored credentials (no re-scan needed) as of 2026-08-22. Next: exercising real send/receive traffic through the UI now that a live channel exists.
 
 ## Pending
 - **M7/M8/M10 — unplanned, partial, not formally done.** Gemini 3.1 Pro (via Antigravity, confirmed by the user) built real chunks of Templates, CRM, and Phase B/Meta Cloud API work out of order and uncommitted, including a destructive Phase A data wipe. Fixed to compile/lint/test/build cleanly by Claude Code on 2026-08-22 (see `parallel-work-inventory.md`, `decisions.md`), but none of it has been verified against its own "done when" criteria the way M1–M6 were — treat as "exists, no longer broken," not "done."
