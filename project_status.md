@@ -13,8 +13,8 @@
 - M4 — Outbound text (send pipeline, status progression, mark-as-read)
 - M5 — The 24-hour service window (window enforcement, composer states, countdown)
 - M6 — Media (inbound download/store, outbound upload/send, thread rendering for every media type) — verified green (tsc/eslint/vitest/integration/build all passing against real Postgres+Redis+MinIO)
-- M7 — Templates (send-time APPROVED re-check, 15-minute + on-connect scheduled sync, admin screen with rejection reasons, variable-mismatch validation, send-path tests) — feature-complete against implementation-plan.md's own task list as of 2026-08-22, still Baileys-only, never exercised against a real Meta template review
-- M8 — CRM layer (tags/notes/custom fields/quick replies, contact panel wired to all of them, a real assignment picker, real Prisma relations on `ContactTag`/`Note`, tenancy tests for all five models) — feature-complete against implementation-plan.md's own task list as of 2026-08-22
+- M7 — Templates (scheduled sync, send-time APPROVED re-check, variable validation + live preview, template button in both window states, admin list+create screen with rejection reasons, both plan-mandated tests) — every box in implementation-plan.md's M7 task list checked off as of 2026-08-23, still Baileys-only, never exercised against a real Meta template review
+- M8 — CRM layer (tags/notes/custom fields/quick replies, contact panel fully editable including name and assignment, channel+tag filters on the conversation list, a Users admin screen with real invite/role/deactivate, real Prisma relations on `ContactTag`/`Note`, tenancy tests for all five models) — every box in implementation-plan.md's M8 task list checked off as of 2026-08-23
 
 ## Currently Working On
 - Real WhatsApp number pairing is done — a live Baileys session is paired and verified reconnecting cleanly from stored credentials (no re-scan needed) as of 2026-08-22. Next: exercising real send/receive traffic through the UI now that a live channel exists.

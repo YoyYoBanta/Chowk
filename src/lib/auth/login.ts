@@ -29,6 +29,13 @@ export async function loginWithPassword(
 
   for (const candidate of candidates) {
     const passwordMatches = await verifyPassword(password, candidate.passwordHash);
+    // A deactivated user (admin's Users screen, M8) fails the same generic
+    // error as a wrong password — never a distinct message, so a login
+    // attempt can't be used to probe whether an email is deactivated vs.
+    // simply wrong.
+    if (passwordMatches && !candidate.isActive) {
+      continue;
+    }
     if (passwordMatches) {
       await createSession({
         userId: candidate.id,

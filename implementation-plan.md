@@ -192,20 +192,20 @@ Not a milestone on its own; this is the one-time setup the plan assumes is in pl
 **Builds on:** architecture.md §9 (template sync data flow), context.md §4.2, §8.0.4, §8.4, §8.5.
 
 **Tasks:**
-- [ ] `Template` model (context.md §7.5) — `status` stored as a raw string, not enumed, since Meta adds values.
-- [ ] `src/queue/jobs/sync-templates.job.ts`, `src/worker/scheduler.ts` entry — runs every 15 minutes and on channel connect (context.md §8.4), calls `provider.listTemplates()`, upserts locally.
-- [ ] `src/providers/baileys/simulate-templates.ts` (context.md §8.0.4) — `listTemplates` reads the local `Template` table; `sendTemplate` renders variables into text and sends as text; `createTemplate` writes locally with status `APPROVED` immediately. This is what lets agents rehearse the real workflow in Phase A (context.md §8.0.4).
-- [ ] `POST /api/templates` (create + submit), `POST /api/templates/sync` (force sync), `GET /api/templates` (filter by channel/status) — context.md §9.
-- [ ] **Send-time re-check**, not just selection-time: `send-message.ts`'s template path must verify `status === 'APPROVED'` immediately before calling `provider.sendTemplate()` (context.md §8.4 — "never send a template whose local status is not APPROVED").
-- [ ] Variable substitution validation (context.md §8.5): API validates supplied-variable count against the template's declared count before calling the provider; UI presents one input per variable with live preview.
-- [ ] Template picker UI wired into the composer's "closed window" state (from M5) and available generally via the template button when the window is open (context.md §10.4).
-- [ ] Admin template screen (context.md §10.6): list, status (including rejection reasons), create.
+- [x] `Template` model (context.md §7.5) — `status` stored as a raw string, not enumed, since Meta adds values.
+- [x] `src/worker/scheduler.ts` entry — runs every 15 minutes and on channel connect (context.md §8.4), calls `provider.listTemplates()`, upserts locally via `src/services/templates/sync.ts` (no separate `src/queue/jobs/sync-templates.job.ts` file — the sync logic is a plain async function shared by the scheduler and the force-sync route, not a BullMQ job of its own; functionally equivalent, no queue needed for a self-triggered interval).
+- [x] Baileys template simulation (context.md §8.0.4) — implemented inline in `src/providers/baileys/adapter.ts` rather than a separate `simulate-templates.ts` file: `listTemplates` reads the local `Template` table; `sendTemplate` renders variables into text and sends as text; `createTemplate` writes locally with status `APPROVED` immediately.
+- [x] `POST /api/templates` (create + submit), `POST /api/templates/sync` (force sync), `GET /api/templates` (filter by channel/status) — context.md §9.
+- [x] **Send-time re-check**, not just selection-time: `send-message.ts`'s template path verifies `status === 'APPROVED'` immediately before calling `provider.sendTemplate()`, and the Worker (`send-message.consumer.ts`) independently re-checks again immediately before the real provider call.
+- [x] Variable substitution validation (context.md §8.5): `sendTemplateMessage()` validates every `{{n}}` placeholder has a non-empty supplied value before creating any row (`src/lib/templates/variables.ts`); the template picker presents one input per variable with a live preview of the substituted body.
+- [x] Template picker UI wired into the composer's "closed window" state (from M5) and available generally via a template button when the window is open (context.md §10.4).
+- [x] Admin template screen (context.md §10.6): list, status (including rejection reasons), create.
 
 **Tests:**
-- [ ] Variable substitution unit test (context.md §13 correctness hotspot): mismatched variable count is caught before the provider call, with a clear error.
-- [ ] Send-time status gate test: a template that was `APPROVED` at selection time but flips to `REJECTED`/`PAUSED` before send is blocked at send.
+- [x] Variable substitution unit test (context.md §13 correctness hotspot): `src/lib/templates/variables.test.ts` — mismatched variable count is caught before the provider call, with a clear error naming the missing keys.
+- [x] Send-time status gate test: `send-message.template.integration.test.ts` — a template `APPROVED` at selection time that flips to `REJECTED` before the Worker runs is blocked at send (FAILED/TEMPLATE_NOT_APPROVED, provider never called).
 
-**Done when (context.md §11, M7):** a template is sent to a conversation with a closed window and arrives correctly with variables substituted.
+**Done when (context.md §11, M7):** a template is sent to a conversation with a closed window and arrives correctly with variables substituted. **Met** — proved via the mocked-provider integration test; real delivery to a live phone via Baileys' actual `sendText()` substitution path is unverified against a live number (see TODO-VERIFY.md).
 
 ---
 
@@ -216,19 +216,19 @@ Not a milestone on its own; this is the one-time setup the plan assumes is in pl
 **Builds on:** context.md §7.5 (Tag, ContactTag, Note, CustomFieldDefinition, QuickReply models), §9 (API surface), §10.5–10.6.
 
 **Tasks:**
-- [ ] Models: `Tag`, `ContactTag`, `Note`, `CustomFieldDefinition`, `QuickReply` (context.md §7.5).
-- [ ] `src/data/` additions for each, same `organizationId`-required pattern.
-- [ ] API routes: `/api/contacts/:id` (PATCH for displayName + custom fields), `/api/contacts/:id/tags` (POST/DELETE), `/api/contacts/:id/notes` (GET/POST), `/api/notes/:id` (PATCH/DELETE), `/api/tags` (GET/POST), `/api/quick-replies` (full CRUD) — context.md §9.
-- [ ] `PATCH /api/conversations/:id` — assign/unassign to an agent, set OPEN/DONE status.
-- [ ] Contact panel made editable (context.md §10.5): name, tags inline add/remove, custom fields, notes with author+timestamp, assignment control, status toggle.
-- [ ] Conversation list filters (context.md §10.2): All / Unassigned / Mine / Done, by channel, by tag — these depend on assignment + tags existing, hence sequenced here rather than M3.
-- [ ] Quick reply `/` shortcut in the composer (context.md §10.4, §7.5) — insertable snippet, optionally with media.
-- [ ] Admin screens for Users (invite/role/deactivate), Tags, Custom field definitions, Quick replies (context.md §10.6) — Channels and Templates admin screens already exist from M2/M7.
+- [x] Models: `Tag`, `ContactTag`, `Note`, `CustomFieldDefinition`, `QuickReply` (context.md §7.5). `ContactTag`/`Note` also gained real `@relation` fields with `onDelete: Cascade` (not present in the original pass — see decisions.md).
+- [x] `src/data/` additions for each, same `organizationId`-required pattern.
+- [x] API routes: `/api/contacts/:id` (PATCH for displayName + custom fields), `/api/contacts/:id/tags` (GET/POST/DELETE), `/api/contacts/:id/notes` (GET/POST), `/api/notes/:id` (PATCH/DELETE), `/api/tags` (GET/POST) + `/api/tags/:id` (PATCH/DELETE), `/api/quick-replies` (full CRUD) — context.md §9.
+- [x] `PATCH /api/conversations/:id` — assign/unassign to an agent, set OPEN/DONE status.
+- [x] Contact panel made editable (context.md §10.5): name (click-to-rename), tags inline add/remove, custom fields (type-validated on save), notes with author+timestamp, assignment control, status toggle.
+- [x] Conversation list filters (context.md §10.2): All / Unassigned / Mine / Done, by channel, by tag.
+- [x] Quick reply `/` shortcut in the composer (context.md §10.4, §7.5) — insertable snippet; media attachment on a quick reply is modeled (`QuickReply.mediaId`) but not yet exercised by the composer's insert flow.
+- [x] Admin screens for Users (invite/role/deactivate — `User.isActive`, a temporary password returned on invite since no email delivery exists), Tags, Custom field definitions, Quick replies (context.md §10.6) — Channels and Templates admin screens already exist from M2/M7.
 
 **Tests:**
-- [ ] Tenancy tests extended to every new model (Tag, Note, CustomFieldDefinition, QuickReply) — cross-tenant read returns nothing.
+- [x] Tenancy tests extended to every new model (`src/data/crm-tenancy.integration.test.ts`): Tag, ContactTag, Note, CustomFieldDefinition, QuickReply — cross-tenant read returns nothing.
 
-**Done when (context.md §11, M8):** an agent can tag a contact, write a note, assign the conversation to a colleague, and insert a quick reply.
+**Done when (context.md §11, M8):** an agent can tag a contact, write a note, assign the conversation to a colleague, and insert a quick reply. **Met** — every step proved via real Postgres integration tests and exercised through the actual UI components, not just the data layer.
 
 ---
 

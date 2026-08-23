@@ -300,3 +300,72 @@ already-paired session (`channel cmt42u419000aaouh6gf9rl1n`, previously
 linked via Gemini's session) — reconnected using stored credentials with no
 QR re-scan required, and `Channel.phoneNumber` updated from the placeholder
 to the real `918360814577` on that connect.
+
+---
+
+## M7/M8 checklist completion pass (2026-08-23)
+
+The earlier fix-up/completion passes (2026-08-22) closed the bugs and gaps
+found along the way but were never checked against `implementation-plan.md`'s
+own literal task lists line by line. Doing that audit surfaced several real,
+still-open items — this section covers the decisions made closing them.
+
+### User deactivation is enforced at login, not just a cosmetic flag
+**Decision:** `User.isActive` (new) is checked inside `loginWithPassword`,
+after a password match, before `createSession()` — a deactivated user with
+the correct password gets the exact same generic error as a wrong password.
+**Why:** a "Deactivate" button that only hides a user from a list without
+actually preventing them from signing in would be misleading — the whole
+point of the admin task (context.md §10.6) is that deactivation is a real
+access control, not a display filter. The generic-error choice matches this
+codebase's existing precedent (`loginWithPassword`'s own `GENERIC_ERROR`,
+used for every failure mode already) — a distinct "this account is
+deactivated" message would let a login attempt be used to enumerate which
+accounts exist and have been deactivated.
+
+### Invited users get a one-time generated password, not an email
+**Decision:** `POST /api/users` generates a random temporary password
+(`randomUUID().slice(0, 12)`) and returns it once in the response body for
+the admin to relay out-of-band.
+**Why:** no email delivery integration exists anywhere in this codebase
+(context.md never specifies one for Tier 1), and building one just to
+unblock the invite flow would be real scope creep for what this task
+actually needs. Matches the same honest "local-dev equivalent, not a fake
+implementation" call already made for the QR-pairing flow and template
+rejection reasons — the admin sees exactly what a real system would need to
+deliver, just relayed manually instead of via SMTP.
+
+### An admin cannot change their own role or deactivate their own account
+**Decision:** `PATCH /api/users/:id` refuses the request (400) when `id`
+equals the caller's own `userId`, regardless of what `role`/`isActive`
+values are sent.
+**Why:** without this, a single-admin organization (true of both seeded
+orgs today) could lock itself out of its own admin screen with one
+misclick, with no recovery path short of a direct database edit. A small,
+common safety rule, enforced in the route (a request-context decision —
+"who is asking" — not a tenancy concern the data layer should own).
+
+### The conversation list's channel filter reads from the initial page load, not a live admin-gated fetch
+**Decision:** `channelOptions` in `conversation-list.tsx` is derived from
+the `initialConversations` prop (the server-rendered first page) via
+`useMemo`, not a fetch to `/api/channels`.
+**Why:** `/api/channels` is deliberately admin-only (context.md §9,
+enforced since the M6/M7 fix-up's `GET /api/channels` addition) — looping
+every agent through an admin-gated endpoint just to populate a filter
+dropdown would mean either loosening that boundary or adding a second,
+duplicate channel-listing route. Deriving from data agents already have
+(their own conversation list) avoids both, at the honest cost that a
+channel with zero currently-open conversations won't appear as a filter
+option until one exists.
+
+### Note author name is resolved in the route, not via a schema relation
+**Decision:** `GET /api/contacts/:id/notes` batch-fetches the org's users
+and attaches `authorName` to each note by matching `authorUserId`, rather
+than adding a `Note.author` relation to `User`.
+**Why:** matches this codebase's existing, deliberate precedent for
+`Conversation.assignedUserId`/`Message.sentByUserId` — user references
+elsewhere in the schema stay plain scalars, not enforced foreign keys (see
+prisma/schema.prisma's own comment on `Conversation.assignedUserId`).
+Adding one relation just for `Note` while every sibling field stays a
+scalar would be an inconsistent, one-off exception with no real benefit —
+the route-level join costs one extra query, not a schema commitment.

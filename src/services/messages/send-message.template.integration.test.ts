@@ -6,7 +6,7 @@ import { createChannel } from "@/data/channels";
 import { createUser } from "@/data/users";
 import { upsertContact } from "@/data/contacts";
 import { upsertConversationForInbound } from "@/data/conversations";
-import { createTemplate } from "@/data/templates";
+import { createTemplate, updateTemplateStatus } from "@/data/templates";
 import type { SendResult, SendTemplateParams, WhatsAppProvider } from "@/providers/types";
 import { sendTemplateMessage } from "./send-message";
 import { processSendMessageJob } from "@/worker/consumers/send-message.consumer";
@@ -217,5 +217,45 @@ describe("template send path (real Postgres, mocked factory only)", () => {
       languageCode: "en",
       variables: { "1": "Asha", "2": "#4821" },
     });
+  });
+
+  it("blocks at send time if the template was approved at selection but has since flipped to REJECTED (the actual race M5's window check already established a precedent for)", async () => {
+    const { org, channel, user, conversation } = await makeFixture("TplRace");
+    await createTemplate(org.id, channel.id, {
+      name: "order_update",
+      language: "en",
+      category: "UTILITY",
+      status: "APPROVED",
+      components: { body: "Hi {{1}}." },
+    });
+
+    // Selection-time check passes — the template is genuinely APPROVED
+    // right now, so a PENDING row and a job get created exactly like the
+    // success case above.
+    const result = await sendTemplateMessage({
+      organizationId: org.id,
+      conversationId: conversation.id,
+      userId: user.id,
+      templateName: "order_update",
+      languageCode: "en",
+      variables: { "1": "Asha" },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // Meta's own sync (or a paused/rejected status arriving) flips the
+    // template in the gap between that request and the Worker actually
+    // running — exactly the scenario sendTemplateViaProvider's own doc
+    // comment (send-message.consumer.ts) exists to guard against.
+    await updateTemplateStatus(org.id, channel.id, "order_update", "en", "REJECTED");
+
+    await processSendMessageJob({ organizationId: org.id, messageId: result.message.id });
+
+    const final = await prisma.message.findUnique({ where: { id: result.message.id } });
+    expect(final?.status).toBe("FAILED");
+    expect(final?.errorCode).toBe("TEMPLATE_NOT_APPROVED");
+    // The Worker's re-check caught it before ever reaching the provider —
+    // the mocked sendTemplate() must never have been called.
+    expect(state.calls).toHaveLength(0);
   });
 });

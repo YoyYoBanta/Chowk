@@ -4,10 +4,13 @@ import { useState, useEffect } from "react";
 import type { ConversationStatus, FieldType } from "@prisma/client";
 import type { ConversationDetailDTO } from "../../_lib/types";
 
-/** M8: client-side shape of one row from GET /api/contacts/:id/notes. */
+/** M8: client-side shape of one row from GET /api/contacts/:id/notes.
+ * authorName is resolved server-side (Note.authorUserId is a plain
+ * scalar, not an enforced relation — see the route's own doc comment). */
 interface NoteDTO {
   id: string;
   body: string;
+  authorName: string;
   createdAt: string;
 }
 
@@ -39,6 +42,9 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
   const [newNote, setNewNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState(conversation.status);
+
+  const [displayName, setDisplayName] = useState(contact.displayName ?? "");
+  const [isEditingName, setIsEditingName] = useState(false);
 
   const [contactTags, setContactTags] = useState<TagDTO[]>([]);
   const [allTags, setAllTags] = useState<TagDTO[]>([]);
@@ -113,6 +119,20 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
+    });
+  };
+
+  const handleSaveName = async () => {
+    setIsEditingName(false);
+    const trimmed = displayName.trim();
+    // Empty clears the override, falling back to the provider-supplied
+    // `contact.name` — matches updateContact's own `displayName?: string
+    // | null` contract (src/data/contacts.ts).
+    setDisplayName(trimmed);
+    await fetch(`/api/contacts/${contact.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: trimmed || null }),
     });
   };
 
@@ -196,12 +216,28 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
             color: "#fff",
             boxShadow: "0 4px 12px rgba(168, 85, 247, 0.4)"
           }}>
-            {(contact.displayName ?? contact.name ?? "U").charAt(0).toUpperCase()}
+            {(displayName || contact.name || "U").charAt(0).toUpperCase()}
           </div>
-          <div>
-            <h2 style={{ fontSize: "1.1em", fontWeight: 600, margin: 0, color: "#fff" }}>
-              {contact.displayName ?? contact.name ?? contact.waId}
-            </h2>
+          <div style={{ minWidth: 0 }}>
+            {isEditingName ? (
+              <input
+                autoFocus
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                onBlur={() => void handleSaveName()}
+                onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
+                placeholder={contact.name ?? contact.waId}
+                style={{ fontSize: "1.1em", fontWeight: 600, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "6px", padding: "2px 6px", color: "#fff", outline: "none", width: "100%" }}
+              />
+            ) : (
+              <h2
+                onClick={() => setIsEditingName(true)}
+                title="Click to rename"
+                style={{ fontSize: "1.1em", fontWeight: 600, margin: 0, color: "#fff", cursor: "pointer" }}
+              >
+                {displayName || contact.name || contact.waId}
+              </h2>
+            )}
             <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.6, marginTop: "4px" }}>
               +{contact.waId}
             </p>
@@ -458,7 +494,7 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                 }}>
                   <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.9em", lineHeight: 1.4 }}>{note.body}</p>
                   <span style={{ fontSize: "0.7em", opacity: 0.5 }}>
-                    {new Date(note.createdAt).toLocaleString()}
+                    {note.authorName} &middot; {new Date(note.createdAt).toLocaleString()}
                   </span>
                 </div>
               ))}

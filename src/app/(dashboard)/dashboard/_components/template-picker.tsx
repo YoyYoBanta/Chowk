@@ -101,12 +101,22 @@ export function TemplatePicker({
     );
   }
 
+  // context.md §8.5: "UI presents one input per variable with live
+  // preview." Every {{n}} in the body gets replaced by its current input
+  // value (blank ones stay as the literal placeholder, so it's obvious
+  // which are still unfilled) — the same substitution shape the real send
+  // path performs, just computed here for display only.
+  const previewBody = selectedTemplate.body.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
+    variables[key] ? variables[key] : match,
+  );
+
   return (
     <div style={{ padding: "1rem", border: "1px solid var(--border, #e5e5e5)", borderRadius: "0.5rem" }}>
       <h3 style={{ marginTop: 0 }}>Fill variables for {selectedTemplate.name}</h3>
       <div style={{ marginBottom: "1rem", padding: "0.5rem", backgroundColor: "var(--background-secondary, #f5f5f5)", borderRadius: "0.25rem" }}>
+        <p style={{ margin: "0 0 0.25rem", fontSize: "0.7em", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.5 }}>Preview</p>
         <p style={{ margin: 0, fontSize: "0.9em", whiteSpace: "pre-wrap" }}>
-          {selectedTemplate.body}
+          {previewBody}
         </p>
       </div>
 

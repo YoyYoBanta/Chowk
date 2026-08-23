@@ -41,6 +41,7 @@ describe("loginWithPassword", () => {
         name: "A",
         role: "AGENT",
         isOnline: false,
+        isActive: true,
         lastSeenAt: null,
         createdAt: new Date(),
       },
@@ -63,6 +64,7 @@ describe("loginWithPassword", () => {
         name: "A",
         role: "ADMIN",
         isOnline: false,
+        isActive: true,
         lastSeenAt: null,
         createdAt: new Date(),
       },
@@ -79,6 +81,31 @@ describe("loginWithPassword", () => {
     });
   });
 
+  it("fails a matching password if the candidate has been deactivated (admin's Users screen)", async () => {
+    vi.mocked(findCandidateUsersByEmailForLogin).mockResolvedValue([
+      {
+        id: "user_deactivated",
+        organizationId: "org_1",
+        email: "gone@example.test",
+        passwordHash: "hash",
+        name: "Deactivated Agent",
+        role: "AGENT",
+        isOnline: false,
+        isActive: false,
+        lastSeenAt: null,
+        createdAt: new Date(),
+      },
+    ]);
+    vi.mocked(verifyPassword).mockResolvedValue(true);
+
+    const result = await loginWithPassword("gone@example.test", "still-the-right-password");
+
+    // Same generic error as a wrong password — never a distinct message
+    // that would let a login attempt confirm a deactivated account exists.
+    expect(result).toEqual({ ok: false, error: expect.any(String) });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
   it("when the same email exists in two orgs, adopts whichever org's password matches", async () => {
     vi.mocked(findCandidateUsersByEmailForLogin).mockResolvedValue([
       {
@@ -89,6 +116,7 @@ describe("loginWithPassword", () => {
         name: "In Org A",
         role: "AGENT",
         isOnline: false,
+        isActive: true,
         lastSeenAt: null,
         createdAt: new Date(),
       },
@@ -100,6 +128,7 @@ describe("loginWithPassword", () => {
         name: "In Org B",
         role: "ADMIN",
         isOnline: false,
+        isActive: true,
         lastSeenAt: null,
         createdAt: new Date(),
       },

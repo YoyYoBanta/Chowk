@@ -68,6 +68,22 @@ export async function setUserOnlineStatus(
   });
 }
 
+/** Admin's Users screen: change a user's role, active status, or both.
+ * Deactivating a user doesn't delete anything — `loginWithPassword`
+ * (src/lib/auth/login.ts) checks `isActive` after a password match and
+ * refuses to start a session, so this is what actually locks someone out,
+ * not just a cosmetic flag. */
+export async function updateUser(
+  organizationId: string,
+  userId: string,
+  data: { role?: Role; isActive?: boolean },
+): Promise<void> {
+  await prisma.user.updateMany({
+    where: { id: userId, organizationId },
+    data,
+  });
+}
+
 /**
  * DELIBERATE, SOLE EXCEPTION to the "organizationId first" rule above.
  *

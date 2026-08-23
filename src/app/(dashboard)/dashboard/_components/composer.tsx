@@ -38,6 +38,7 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Quick Replies State
@@ -271,6 +272,25 @@ export function Composer({
     return <ClosedWindowComposer channelId={channelId} onSend={handleTemplateSend} disabled={sending} />;
   }
 
+  // context.md §10.4: the template picker isn't only for a closed window —
+  // it's "available generally via the template button when the window is
+  // open" too (an agent can choose to send a template even when free text
+  // still works, e.g. a structured order-update template).
+  if (showTemplatePicker) {
+    return (
+      <div style={{ padding: "0.75rem", borderTop: "1px solid var(--border, #e5e5e5)" }}>
+        <TemplatePicker
+          channelId={channelId}
+          onSelect={(name, lang, vars) => {
+            setShowTemplatePicker(false);
+            void handleTemplateSend(name, lang, vars);
+          }}
+          onCancel={() => setShowTemplatePicker(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: "relative" }}>
       <WindowCountdown closesAt={closesAt} />
@@ -374,9 +394,26 @@ export function Composer({
         >
           📎
         </button>
-        <button 
-          type="button" 
-          onClick={() => void handleSend()} 
+        <button
+          type="button"
+          onClick={() => setShowTemplatePicker(true)}
+          disabled={sending}
+          title="Send a template message"
+          aria-label="Send a template message"
+          style={{
+            padding: "0.75rem",
+            background: "rgba(255,255,255,0.05)",
+            border: "none",
+            borderRadius: "0.5rem",
+            cursor: "pointer",
+            fontSize: "1.2em"
+          }}
+        >
+          📄
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleSend()}
           disabled={sending || !text.trim()}
           style={{
             padding: "0.75rem 1.5rem",
