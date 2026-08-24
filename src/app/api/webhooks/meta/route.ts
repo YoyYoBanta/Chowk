@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifySignature } from "@/providers/cloud-api/webhook-verify";
 import { env } from "@/config/env";
 import { getIngestInboundQueue, getStatusUpdateQueue } from "@/queue/queues";
+import { logger, newCorrelationId } from "@/lib/logging/logger";
 import type {
   InteractivePayload,
   MediaReference,
@@ -27,12 +28,16 @@ export async function GET(req: Request) {
 
 // POST for events
 export async function POST(req: Request) {
+  const correlationId = newCorrelationId();
+  const route = "POST /api/webhooks/meta";
+
   // 1. Read raw body for signature verification
   const rawBody = await req.text();
   const signature = req.headers.get("x-hub-signature-256");
 
   // 2. Verify signature
   if (env.META_APP_SECRET && !verifySignature(rawBody, signature, env.META_APP_SECRET)) {
+    logger.warn("webhook signature verification failed", { correlationId, route, statusCode: 401 });
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
@@ -61,7 +66,10 @@ export async function POST(req: Request) {
             });
 
             if (!channel) {
-              console.warn(`Webhook received for unknown metaPhoneNumberId: ${phoneNumberId}`);
+              logger.warn(`webhook received for unknown metaPhoneNumberId (${phoneNumberId}) — dropping`, {
+                correlationId,
+                route,
+              });
               continue;
             }
 
@@ -119,12 +127,13 @@ export async function POST(req: Request) {
       where: { id: eventRecord.id },
       data: { processedAt: new Date() },
     });
-
+    logger.info("webhook processed", { correlationId, route, statusCode: 200 });
   } catch (error) {
-    console.error("Webhook processing error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("webhook processing error", { correlationId, route, errorMessage });
     await prisma.webhookEvent.update({
       where: { id: eventRecord.id },
-      data: { error: error instanceof Error ? error.message : "Unknown error" },
+      data: { error: errorMessage },
     });
   }
 

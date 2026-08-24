@@ -369,3 +369,80 @@ prisma/schema.prisma's own comment on `Conversation.assignedUserId`).
 Adding one relation just for `Note` while every sibling field stays a
 scalar would be an inconsistent, one-off exception with no real benefit —
 the route-level join costs one extra query, not a schema commitment.
+
+---
+
+## M9 — Search and hardening (2026-08-24)
+
+### Message search performance is a hand-written `pg_trgm` migration, not a schema.prisma declaration
+**Decision:** `CREATE EXTENSION IF NOT EXISTS pg_trgm` + `CREATE INDEX ...
+USING gin ("body" gin_trgm_ops)` live in a plain SQL migration
+(`20260824130424_m9_message_search_index`), invisible to `schema.prisma`
+itself.
+**Why:** this Prisma version has no stable, declarative syntax for a
+Postgres GIN(gin_trgm_ops) index without turning on preview features
+(`postgresqlExtensions`) this project hasn't otherwise needed anywhere
+else — adding one just for this index would be a bigger commitment than
+the index itself. Matches this repo's own established precedent (the
+M7/M8 relations migration and others) of hand-writing migration SQL when
+the declarative schema can't express something.
+**Considered and rejected:** enabling `postgresqlExtensions` and declaring
+the index in `schema.prisma` directly — more "discoverable" from the
+schema file alone, but a real, standing change to how every future
+migration in this project gets generated, for the sake of one index.
+
+### Admin/CRM management lists stay plain arrays, not cursor-paginated
+**Decision:** `Conversation`/`Message` are cursor-paginated (since M3);
+`Tag`/`QuickReply`/`CustomFieldDefinition`/`User`/`Channel`/per-channel
+`Template` list endpoints are not, and this milestone's pagination audit
+left them that way.
+**Why:** context.md §9's "every list endpoint is cursor-paginated" rule
+exists because Conversation/Message volume is genuinely unbounded and
+grows with real usage — the failure mode it guards against ("offset
+pagination will break") doesn't apply to a collection whose size is
+bounded by how many tags/users/templates one organization's admin
+actually creates, realistically dozens, not thousands. Paginating those
+anyway would add real complexity (cursor encode/decode, "load more" UI)
+for collections that will never need it.
+**Worth revisiting:** only if a specific organization's tag/quick-reply
+count ever grows large enough to make the flat list genuinely slow to
+render — not expected at this project's stated scale.
+
+### Stuck-PENDING reconciliation marks FAILED, never re-enqueues
+**Decision:** `reconcileStuckPendingMessagesForOrg` (30-minute threshold)
+calls `markMessageFailed` directly; it never calls `getSendMessageQueue().add(...)`
+again for the same message.
+**Why:** re-enqueueing a message that might already have a job in flight
+risks two workers both passing `processSendMessageJob`'s idempotency
+guard (`status !== PENDING -> skip`) before either has written a new
+status, and both calling the real provider — an actual double-send, not
+just a wasted retry. A definitive `FAILED` (visible to the agent, same
+precedent `markSendMessageJobExhausted` already set for "retries
+genuinely exhausted") is the safe resolution; the agent can always
+compose and send again. The 30-minute threshold is deliberately generous
+— `send-message`'s own worst-case retry span (5 attempts, exponential
+backoff from 2s) finishes in under a minute, so this only ever fires for
+the rare case where the normal retry-then-fail path itself never ran at
+all (e.g. the job never reached Redis), not to race BullMQ's own backoff.
+
+### The forced-restart test uses its own private BullMQ queue, not the shared `send-message` queue
+**Decision:** `src/worker/forced-restart.integration.test.ts` creates a
+uniquely-named `Queue`/`Worker` pair for the duration of the test, and
+drives the real `processSendMessageJob` function through it directly
+(bypassing `sendTextMessage()`'s own enqueue onto the real queue).
+**Why:** the first version of this test used the real `send-message`
+queue and `sendTextMessage()`, and failed intermittently — not from a bug
+in the code under test, but because a genuine, separately-running
+`npm run worker` process (this project's normal local dev setup, holding
+the live paired WhatsApp session) was racing the test's own Worker
+instances for the exact same job, using the real, un-mocked provider.
+Confirmed by stopping that process once and watching the test pass
+reliably, then permanently fixed by giving the test exclusive ownership
+of its own queue instead of repeatedly needing to stop a live process to
+run the suite. `processSendMessageJob` only ever depends on
+`{ organizationId, messageId }`, never which queue delivered the job, so
+this required no change to the function under test itself.
+**Considered and rejected:** stopping the real worker process as a
+standing prerequisite for running the integration suite — fragile (easy
+to forget, disrupts real local development) and unnecessary once the
+actual root cause (shared queue name) was identified and fixed properly.

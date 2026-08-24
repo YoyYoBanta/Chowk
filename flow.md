@@ -289,6 +289,42 @@
      → from here on, real inbound messages flow through Flow 1
 ```
 
+## Flow 10 — Scheduled jobs (template sync + stuck-message reconciliation)
+
+```
+1. src/worker/index.ts   main()
+     ↓ after connectActiveChannels()
+   src/worker/scheduler.ts   startTemplateSyncScheduler()
+   src/worker/scheduler.ts   startStuckMessageReconciliationScheduler()
+   both built on the shared private helper startScheduler(tick, intervalMs)
+   — fires `tick` once immediately, then every intervalMs, returns {stop}
+
+   ═══ template sync tick, every 15 min ═══
+2a. src/services/templates/sync.ts   syncTemplatesForAllOrgs(orgIds)
+    a. src/data/organizations.ts     listOrganizations()
+    b. per org: src/services/templates/sync.ts   syncTemplatesForOrg(orgId)
+       → src/data/channels.ts        listChannelsInOrg(orgId)
+       → src/providers/factory.ts    getWhatsAppProvider()
+       → per channel: provider.listTemplates(channelId)
+       → src/data/templates.ts       upsertTemplateFromSync(...)  per template
+    (a per-org failure is logged and skipped, never stops the sweep)
+
+   ═══ stuck-message reconciliation tick, every 5 min ═══
+2b. src/services/messages/reconcile-stuck.ts   reconcileStuckPendingMessagesForAllOrgs()
+    a. src/data/organizations.ts     listOrganizations()
+    b. per org: reconcileStuckPendingMessagesForOrg(orgId)
+       → src/data/messages.ts        findStuckPendingMessages(orgId, cutoff)
+         (status PENDING, direction OUTBOUND, createdAt older than 30 min)
+       → per stuck message:
+         src/data/messages.ts        markMessageFailed(orgId, id, "STUCK_PENDING_TIMEOUT", ...)
+         src/data/messages.ts        getMessageById(orgId, id)  (fresh row)
+         src/services/realtime/publish.ts   publishMessageStatusChanged(...)
+         → branches into Flow 6
+
+3. src/worker/index.ts   shutdown(signal)
+   templateSyncScheduler.stop() / stuckMessageScheduler.stop()  → clearInterval
+```
+
 ---
 
 ## Currently editing
@@ -297,7 +333,16 @@ _(Update this section to point at whatever part of the flows above is
 actively being changed. When nothing is mid-change, it should say so rather
 than go stale.)_
 
-**As of 2026-08-21:** just finished adding Flow 9 (channel pairing) —
+**As of 2026-08-24:** just finished M9 (search and hardening) — added Flow
+10 (scheduled jobs: template sync + the new stuck-message reconciliation
+sweep). In-thread search (`ThreadView`'s new search box → `GET
+/api/conversations/:id/messages?search=`) branches off the existing message
+list fetch in Flow 1/3's shared read path, not a new flow of its own. Nothing
+is currently mid-change — M1–M9 are all now checklist-complete against
+implementation-plan.md; M10 (Phase B) remains the next real milestone
+whenever the human is ready.
+
+**As of 2026-08-21 (historical):** just finished adding Flow 9 (channel pairing) —
 `src/worker/index.ts`'s `connectActiveChannels()`, `scripts/activate-channel.ts`,
 and the QR-printing addition to `src/providers/baileys/adapter.ts`'s
 `handleConnectionUpdate`. This was needed because the maintainer is about to

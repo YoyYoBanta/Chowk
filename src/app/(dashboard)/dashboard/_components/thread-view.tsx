@@ -78,6 +78,9 @@ export function ThreadView({
   });
   const [olderCursor, setOlderCursor] = useState(initialOlderCursor);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<MessageDTO[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -239,6 +242,41 @@ export function ThreadView({
 
   useRealtimeEvents(handleEvent, onReconnect);
 
+  // In-thread search (implementation-plan.md's M9 task list — the
+  // conversation list already had search; the thread itself didn't). Debounced,
+  // and deliberately a SEPARATE result set from `messages` rather than
+  // filtering it client-side — the visible page only ever holds a recent
+  // window of messages (infinite-scroll-loaded), so a real search has to hit
+  // the server (GET /api/conversations/:id/messages?search=, backed by the
+  // trigram-indexed Message.body lookup in src/data/messages.ts) to find a
+  // match anywhere in the conversation's full history.
+  //
+  // `isSearchActive` (derived from the trimmed query, not stored state)
+  // decides at render time whether `messages` or `searchResults` is shown —
+  // the effect below only ever sets state from its async branch, never
+  // synchronously in the effect body itself (react-hooks/set-state-in-effect).
+  const isSearchActive = searchQuery.trim().length > 0;
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    const timer = setTimeout(() => {
+      setIsSearching(true);
+      void fetch(`/api/conversations/${conversationId}/messages?search=${encodeURIComponent(query)}`, {
+        credentials: "same-origin",
+      })
+        .then((res) => (res.ok ? (res.json() as Promise<MessagesPageResponse>) : null))
+        .then((data) => {
+          setSearchResults(data ? [...data.messages].reverse() : []);
+        })
+        .catch(() => setSearchResults([]))
+        .finally(() => setIsSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, conversationId]);
+
+  const visibleMessages = isSearchActive ? searchResults : messages;
+
   // Optimistic-send reconciliation (M4) — see composer.tsx's own doc
   // comment for the full story. These three callbacks are the only place
   // ThreadView's own message list is mutated outside of the realtime
@@ -264,14 +302,41 @@ export function ThreadView({
 
   return (
     <div>
+      <div style={{ padding: "0.5rem 0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search this conversation..."
+          style={{
+            flex: 1,
+            padding: "0.5rem 0.75rem",
+            borderRadius: "8px",
+            border: "1px solid rgba(255,255,255,0.1)",
+            background: "rgba(255,255,255,0.03)",
+            color: "#fff",
+            fontSize: "0.85em",
+            outline: "none",
+          }}
+        />
+        {isSearchActive && (
+          <span style={{ fontSize: "0.8em", opacity: 0.5, whiteSpace: "nowrap" }}>
+            {isSearching ? "Searching…" : `${searchResults.length} match${searchResults.length === 1 ? "" : "es"}`}
+          </span>
+        )}
+      </div>
       <div
         ref={scrollContainerRef}
         style={{ height: "70vh", overflowY: "auto", display: "flex", flexDirection: "column", padding: "0.5rem" }}
       >
-        <div ref={topSentinelRef} />
-        {loadingOlder && <p style={{ textAlign: "center", fontSize: "0.8em", opacity: 0.6 }}>Loading older messages...</p>}
-        {messages.length === 0 && <p style={{ opacity: 0.6 }}>No messages yet.</p>}
-        {messages.map((message) => (
+        {!isSearchActive && <div ref={topSentinelRef} />}
+        {!isSearchActive && loadingOlder && (
+          <p style={{ textAlign: "center", fontSize: "0.8em", opacity: 0.6 }}>Loading older messages...</p>
+        )}
+        {visibleMessages.length === 0 && (
+          <p style={{ opacity: 0.6 }}>{isSearchActive ? "No messages match your search." : "No messages yet."}</p>
+        )}
+        {visibleMessages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
         <div ref={bottomRef} />

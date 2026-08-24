@@ -265,6 +265,32 @@ export async function applyForwardOnlyMessageStatus(
   return { applied: result.count > 0 };
 }
 
+/**
+ * M9 hardening (implementation-plan.md — "a scheduled job that flags/
+ * re-checks Message rows stuck in PENDING past a timeout"): every normal
+ * path already resolves PENDING within seconds — a successful send, a
+ * terminal SendResult, or `markSendMessageJobExhausted` once BullMQ's own
+ * retries run out (src/worker/consumers/send-message.consumer.ts). A row
+ * still PENDING well past all of that combined can only mean something
+ * outside those paths failed (e.g. the job never actually reached Redis,
+ * or was lost) — this is what finds those for `reconcileStuckPendingMessages`
+ * (src/services/messages/reconcile-stuck.ts) to act on. Outbound only:
+ * inbound messages have no send workflow to get stuck in.
+ */
+export async function findStuckPendingMessages(
+  organizationId: string,
+  olderThan: Date,
+): Promise<Message[]> {
+  return prisma.message.findMany({
+    where: {
+      organizationId,
+      direction: "OUTBOUND",
+      status: "PENDING",
+      createdAt: { lt: olderThan },
+    },
+  });
+}
+
 export async function listMessagesInConversation(
   organizationId: string,
   conversationId: string,

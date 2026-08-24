@@ -54,7 +54,7 @@ import { processDownloadMediaJob } from "@/worker/consumers/download-media.consu
 import { listOrganizations } from "@/data/organizations";
 import { listChannelsInOrg } from "@/data/channels";
 import { getWhatsAppProvider } from "@/providers/factory";
-import { startTemplateSyncScheduler } from "@/worker/scheduler";
+import { startTemplateSyncScheduler, startStuckMessageReconciliationScheduler } from "@/worker/scheduler";
 import { syncTemplatesForChannel } from "@/services/templates/sync";
 
 function startIngestInboundWorker(): Worker<IngestInboundJobData> {
@@ -200,11 +200,13 @@ async function main(): Promise<void> {
 
   const connectedChannelIds = await connectActiveChannels();
   const templateSyncScheduler = startTemplateSyncScheduler();
+  const stuckMessageScheduler = startStuckMessageReconciliationScheduler();
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[worker] received ${signal}, shutting down`);
     const provider = getWhatsAppProvider();
     templateSyncScheduler.stop();
+    stuckMessageScheduler.stop();
     await Promise.all([
       ingestInboundWorker.close(),
       sendMessageWorker.close(),
