@@ -44,18 +44,27 @@ export function MessageBubble({ message }: { message: MessageDTO }) {
         style={{
           maxWidth: "75%",
           padding: "0.5rem 0.75rem",
-          borderRadius: "0.75rem",
-          background: outbound ? "#2563eb" : "var(--bubble-bg, #f0f0f0)",
-          color: outbound ? "#fff" : "inherit",
+          borderRadius: "var(--radius-md)",
+          borderBottomRightRadius: outbound ? "3px" : "var(--radius-md)",
+          borderBottomLeftRadius: outbound ? "var(--radius-md)" : "3px",
+          background: outbound ? "var(--accent-strong)" : "var(--surface-raised)",
+          color: outbound ? "var(--text-on-accent)" : "var(--text-primary)",
         }}
       >
         <MessageContent message={message} />
-        <div style={{ fontSize: "0.7em", opacity: 0.7, marginTop: "0.2rem", textAlign: "right" }}>
+        <div
+          style={{
+            fontSize: "0.7rem",
+            opacity: outbound ? 0.8 : 0.55,
+            marginTop: "0.2rem",
+            textAlign: "right",
+          }}
+        >
           {formatRelativeTime(message.metaTimestamp)}
           {outbound ? ` · ${STATUS_LABELS[message.status] ?? message.status}` : ""}
         </div>
         {outbound && message.status === "FAILED" && (
-          <div style={{ fontSize: "0.75em", color: "#ffdddd", marginTop: "0.2rem" }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--danger)", marginTop: "0.2rem" }}>
             Couldn&apos;t send this message — {message.errorMessage || "please try again."}
           </div>
         )}

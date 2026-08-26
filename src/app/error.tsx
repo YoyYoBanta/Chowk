@@ -29,16 +29,15 @@ export default function RootError({
         justifyContent: "center",
         gap: "1rem",
         padding: "2rem",
-        background: "#0a0a0b",
-        color: "#e2e2e2",
-        fontFamily: "'Inter', system-ui, sans-serif",
+        background: "var(--bg)",
+        color: "var(--text-primary)",
         textAlign: "center",
       }}
     >
-      <h1 style={{ fontSize: "1.4rem", fontWeight: 700, margin: 0, color: "#fff" }}>
+      <h1 style={{ fontSize: "1.4rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
         Something went wrong
       </h1>
-      <p style={{ maxWidth: "32rem", opacity: 0.7, margin: 0 }}>
+      <p style={{ maxWidth: "32rem", color: "var(--text-secondary)", margin: 0 }}>
         An unexpected error occurred loading this page.
       </p>
       <button
@@ -46,11 +45,11 @@ export default function RootError({
         onClick={() => reset()}
         style={{
           padding: "0.6rem 1.5rem",
-          background: "linear-gradient(135deg, #6366f1, #a855f7)",
+          background: "var(--accent)",
           border: "none",
-          borderRadius: "8px",
-          color: "#fff",
-          fontWeight: 600,
+          borderRadius: "var(--radius-sm)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
           cursor: "pointer",
         }}
       >

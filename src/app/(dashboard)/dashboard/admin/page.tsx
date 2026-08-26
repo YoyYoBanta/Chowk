@@ -281,41 +281,42 @@ export default function AdminPage() {
   };
 
   return (
-    <div style={{ padding: "3rem", background: "#0a0a0b", minHeight: "100vh", color: "#e2e2e2", fontFamily: "'Inter', sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-        <h1 style={{ fontSize: "2rem", fontWeight: 700, margin: 0, background: "linear-gradient(135deg, #6366f1, #a855f7)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-          CRM Admin Settings
+    <div style={{ padding: "var(--space-6)", background: "var(--bg)", minHeight: "100vh", color: "var(--text-primary)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-5)" }}>
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+          Admin Settings
         </h1>
-        <Link 
+        <Link
           href="/dashboard/admin/channels"
           style={{
-            padding: "0.5rem 1.5rem",
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: "8px",
-            color: "#fff",
+            padding: "0.5rem 1.25rem",
+            background: "var(--surface)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--radius-sm)",
+            color: "var(--text-primary)",
             textDecoration: "none",
-            fontWeight: 600
+            fontWeight: 600,
+            fontSize: "0.88rem",
           }}
         >
           Manage Channels
         </Link>
       </div>
 
-      <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-5)", borderBottom: "1px solid var(--border)", paddingBottom: "var(--space-4)" }}>
         {(["users", "tags", "fields", "replies", "templates"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             style={{
-              padding: "0.5rem 1.5rem",
-              background: activeTab === tab ? "rgba(99, 102, 241, 0.1)" : "transparent",
-              color: activeTab === tab ? "#818cf8" : "rgba(255,255,255,0.5)",
+              padding: "0.45rem 1.1rem",
+              background: activeTab === tab ? "var(--accent-soft)" : "transparent",
+              color: activeTab === tab ? "var(--accent)" : "var(--text-secondary)",
               border: "none",
-              borderRadius: "20px",
+              borderRadius: "var(--radius-full)",
               cursor: "pointer",
               fontWeight: 600,
-              transition: "all 0.2s"
+              fontSize: "0.85rem",
             }}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -323,22 +324,22 @@ export default function AdminPage() {
         ))}
       </div>
 
-      <div style={{ background: "#111113", padding: "2rem", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+      <div style={{ background: "var(--surface)", padding: "var(--space-5)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-panel)" }}>
 
         {activeTab === "users" && (
           <div>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "#fff" }}>Users</h2>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "var(--text-primary)" }}>Users</h2>
 
             {invitedCredential && (
-              <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "rgba(74, 222, 128, 0.08)", border: "1px solid rgba(74, 222, 128, 0.25)", borderRadius: "8px" }}>
-                <p style={{ margin: 0, fontSize: "0.85em", color: "#4ade80" }}>
+              <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "var(--accent-soft)", border: "1px solid var(--accent-soft-border)", borderRadius: "var(--radius-sm)" }}>
+                <p style={{ margin: 0, fontSize: "0.85em", color: "var(--accent)" }}>
                   Invited <strong>{invitedCredential.email}</strong>. Temporary password (share this with them
-                  directly — it won&apos;t be shown again): <code style={{ background: "rgba(0,0,0,0.3)", padding: "2px 8px", borderRadius: "4px" }}>{invitedCredential.password}</code>
+                  directly — it won&apos;t be shown again): <code style={{ background: "var(--bg)", padding: "2px 8px", borderRadius: "4px" }}>{invitedCredential.password}</code>
                 </p>
               </div>
             )}
             {inviteError && (
-              <p style={{ margin: "0 0 1rem", fontSize: "0.85em", color: "#f87171" }}>{inviteError}</p>
+              <p style={{ margin: "0 0 1rem", fontSize: "0.85em", color: "var(--danger)" }}>{inviteError}</p>
             )}
 
             <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
@@ -347,26 +348,26 @@ export default function AdminPage() {
                 placeholder="Name"
                 value={newUserName}
                 onChange={e => setNewUserName(e.target.value)}
-                style={{ width: "180px", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ width: "180px", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               />
               <input
                 type="email"
                 placeholder="Email"
                 value={newUserEmail}
                 onChange={e => setNewUserEmail(e.target.value)}
-                style={{ flex: 1, minWidth: "180px", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ flex: 1, minWidth: "180px", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               />
               <select
                 value={newUserRole}
                 onChange={e => setNewUserRole(e.target.value as Role)}
-                style={{ padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               >
                 <option value="AGENT">Agent</option>
                 <option value="ADMIN">Admin</option>
               </select>
               <button
                 onClick={() => void handleInviteUser()}
-                style={{ padding: "0.75rem 1.5rem", background: "linear-gradient(135deg, #6366f1, #a855f7)", border: "none", borderRadius: "8px", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+                style={{ padding: "0.75rem 1.5rem", background: "var(--accent)", border: "none", borderRadius: "var(--radius-sm)", color: "var(--text-on-accent)", fontWeight: 700, cursor: "pointer" }}
               >
                 Invite
               </button>
@@ -374,26 +375,26 @@ export default function AdminPage() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {users.map(u => (
-                <div key={u.id} style={{ display: "flex", gap: "1rem", alignItems: "center", padding: "1rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", opacity: u.isActive ? 1 : 0.5 }}>
+                <div key={u.id} style={{ display: "flex", gap: "1rem", alignItems: "center", padding: "1rem", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", opacity: u.isActive ? 1 : 0.5 }}>
                   <div style={{ minWidth: "220px" }}>
-                    <div style={{ color: "#fff", fontWeight: 500 }}>{u.name}</div>
+                    <div style={{ color: "var(--text-primary)", fontWeight: 600 }}>{u.name}</div>
                     <div style={{ fontSize: "0.8em", opacity: 0.6 }}>{u.email}</div>
                   </div>
                   <select
                     value={u.role}
                     onChange={e => void handleChangeRole(u.id, e.target.value as Role)}
-                    style={{ padding: "0.5rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "6px", color: "#fff", outline: "none" }}
+                    style={{ padding: "0.5rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                   >
                     <option value="AGENT">Agent</option>
                     <option value="ADMIN">Admin</option>
                   </select>
-                  <span style={{ fontSize: "0.8em", padding: "2px 10px", borderRadius: "12px", background: "rgba(255,255,255,0.06)", color: u.isActive ? "#4ade80" : "#f87171" }}>
+                  <span style={{ fontSize: "0.8em", padding: "2px 10px", borderRadius: "var(--radius-full)", background: u.isActive ? "var(--accent-soft)" : "var(--danger-soft)", color: u.isActive ? "var(--accent)" : "var(--danger)" }}>
                     {u.isActive ? "Active" : "Deactivated"}
                   </span>
                   <button
                     type="button"
                     onClick={() => void handleToggleActive(u.id, !u.isActive)}
-                    style={{ marginLeft: "auto", padding: "0.5rem 1rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "6px", color: "#fff", cursor: "pointer", fontSize: "0.85em" }}
+                    style={{ marginLeft: "auto", padding: "0.5rem 1rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", cursor: "pointer", fontSize: "0.85em" }}
                   >
                     {u.isActive ? "Deactivate" : "Reactivate"}
                   </button>
@@ -406,7 +407,7 @@ export default function AdminPage() {
 
         {activeTab === "tags" && (
           <div>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "#fff" }}>Manage Tags</h2>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "var(--text-primary)" }}>Manage Tags</h2>
             <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem" }}>
               <input 
                 type="text" 
@@ -416,10 +417,10 @@ export default function AdminPage() {
                 style={{
                   flex: 1,
                   padding: "0.75rem",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#fff",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-primary)",
                   outline: "none"
                 }}
               />
@@ -427,11 +428,11 @@ export default function AdminPage() {
                 onClick={handleCreateTag}
                 style={{
                   padding: "0.75rem 1.5rem",
-                  background: "linear-gradient(135deg, #6366f1, #a855f7)",
+                  background: "var(--accent)",
                   border: "none",
-                  borderRadius: "8px",
-                  color: "#fff",
-                  fontWeight: 600,
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-on-accent)",
+                  fontWeight: 700,
                   cursor: "pointer"
                 }}
               >
@@ -442,7 +443,7 @@ export default function AdminPage() {
               {tags.map(tag => (
                 <span
                   key={tag.id}
-                  style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "6px 6px 6px 12px", background: "rgba(99, 102, 241, 0.1)", border: "1px solid rgba(99, 102, 241, 0.2)", borderRadius: "16px", color: "#818cf8", fontSize: "0.9em", fontWeight: 500 }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "6px 6px 6px 12px", background: "var(--accent-soft)", border: "1px solid var(--accent-soft-border)", borderRadius: "var(--radius-full)", color: "var(--accent)", fontSize: "0.9em", fontWeight: 500 }}
                 >
                   {editingTagId === tag.id ? (
                     <input
@@ -451,7 +452,7 @@ export default function AdminPage() {
                       onChange={e => setEditingTagName(e.target.value)}
                       onBlur={() => void handleSaveRenameTag(tag.id)}
                       onKeyDown={e => e.key === "Enter" && handleSaveRenameTag(tag.id)}
-                      style={{ width: "100px", padding: "2px 6px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "4px", color: "#fff", outline: "none", fontSize: "inherit" }}
+                      style={{ width: "100px", padding: "2px 6px", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "4px", color: "var(--text-primary)", outline: "none", fontSize: "inherit" }}
                     />
                   ) : (
                     <button
@@ -480,7 +481,7 @@ export default function AdminPage() {
 
         {activeTab === "replies" && (
           <div>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "#fff" }}>Manage Quick Replies</h2>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "var(--text-primary)" }}>Manage Quick Replies</h2>
             <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem" }}>
               <input 
                 type="text" 
@@ -490,10 +491,10 @@ export default function AdminPage() {
                 style={{
                   width: "200px",
                   padding: "0.75rem",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#fff",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-primary)",
                   outline: "none"
                 }}
               />
@@ -505,10 +506,10 @@ export default function AdminPage() {
                 style={{
                   flex: 1,
                   padding: "0.75rem",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#fff",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-primary)",
                   outline: "none"
                 }}
               />
@@ -516,11 +517,11 @@ export default function AdminPage() {
                 onClick={handleCreateReply}
                 style={{
                   padding: "0.75rem 1.5rem",
-                  background: "linear-gradient(135deg, #6366f1, #a855f7)",
+                  background: "var(--accent)",
                   border: "none",
-                  borderRadius: "8px",
-                  color: "#fff",
-                  fontWeight: 600,
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-on-accent)",
+                  fontWeight: 700,
                   cursor: "pointer"
                 }}
               >
@@ -529,9 +530,9 @@ export default function AdminPage() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
               {replies.map(reply => (
-                <div key={reply.id} style={{ display: "flex", gap: "2rem", padding: "1rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
-                  <span style={{ color: "#818cf8", fontWeight: 600, width: "150px" }}>/{reply.shortcut}</span>
-                  <span style={{ color: "#ccc" }}>{reply.body}</span>
+                <div key={reply.id} style={{ display: "flex", gap: "2rem", padding: "1rem", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--accent)", fontWeight: 600, width: "150px" }}>/{reply.shortcut}</span>
+                  <span style={{ color: "var(--text-secondary)" }}>{reply.body}</span>
                 </div>
               ))}
               {replies.length === 0 && <p style={{ opacity: 0.5 }}>No quick replies created yet.</p>}
@@ -541,26 +542,26 @@ export default function AdminPage() {
 
         {activeTab === "fields" && (
           <div>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "#fff" }}>Custom Fields</h2>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "1.5rem", color: "var(--text-primary)" }}>Custom Fields</h2>
             <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem", flexWrap: "wrap" }}>
               <input
                 type="text"
                 placeholder="Key (e.g. company)"
                 value={newFieldKey}
                 onChange={e => setNewFieldKey(e.target.value)}
-                style={{ width: "160px", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ width: "160px", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               />
               <input
                 type="text"
                 placeholder="Label (e.g. Company)"
                 value={newFieldLabel}
                 onChange={e => setNewFieldLabel(e.target.value)}
-                style={{ flex: 1, minWidth: "160px", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ flex: 1, minWidth: "160px", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               />
               <select
                 value={newFieldType}
                 onChange={e => setNewFieldType(e.target.value as FieldType)}
-                style={{ padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                style={{ padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
               >
                 <option value="TEXT">Text</option>
                 <option value="NUMBER">Number</option>
@@ -573,22 +574,22 @@ export default function AdminPage() {
                   placeholder="Options, comma-separated"
                   value={newFieldOptions}
                   onChange={e => setNewFieldOptions(e.target.value)}
-                  style={{ flex: 1, minWidth: "160px", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                  style={{ flex: 1, minWidth: "160px", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                 />
               )}
               <button
                 onClick={handleCreateField}
-                style={{ padding: "0.75rem 1.5rem", background: "linear-gradient(135deg, #6366f1, #a855f7)", border: "none", borderRadius: "8px", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+                style={{ padding: "0.75rem 1.5rem", background: "var(--accent)", border: "none", borderRadius: "var(--radius-sm)", color: "var(--text-on-accent)", fontWeight: 700, cursor: "pointer" }}
               >
                 Create Field
               </button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {fieldDefs.map(def => (
-                <div key={def.id} style={{ display: "flex", gap: "1rem", padding: "1rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)", alignItems: "center" }}>
-                  <span style={{ color: "#818cf8", fontWeight: 600, width: "160px" }}>{def.label}</span>
+                <div key={def.id} style={{ display: "flex", gap: "1rem", padding: "1rem", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", alignItems: "center" }}>
+                  <span style={{ color: "var(--accent)", fontWeight: 600, width: "160px" }}>{def.label}</span>
                   <code style={{ opacity: 0.6, fontSize: "0.85em" }}>{def.key}</code>
-                  <span style={{ marginLeft: "auto", fontSize: "0.8em", padding: "2px 10px", borderRadius: "12px", background: "rgba(255,255,255,0.06)", opacity: 0.8 }}>{def.type}</span>
+                  <span style={{ marginLeft: "auto", fontSize: "0.8em", padding: "2px 10px", borderRadius: "var(--radius-full)", background: "var(--surface-raised)", color: "var(--text-secondary)" }}>{def.type}</span>
                 </div>
               ))}
               {fieldDefs.length === 0 && <p style={{ opacity: 0.5 }}>No custom fields created yet.</p>}
@@ -599,16 +600,16 @@ export default function AdminPage() {
         {activeTab === "templates" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-              <h2 style={{ fontSize: "1.2rem", fontWeight: 600, margin: 0, color: "#fff" }}>Message Templates</h2>
+              <h2 style={{ fontSize: "1.2rem", fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>Message Templates</h2>
               <button
                 onClick={() => void handleSyncTemplates()}
                 disabled={isSyncing}
                 style={{
                   padding: "0.6rem 1.25rem",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#fff",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-primary)",
                   fontWeight: 600,
                   cursor: isSyncing ? "default" : "pointer",
                   opacity: isSyncing ? 0.6 : 1,
@@ -619,16 +620,16 @@ export default function AdminPage() {
             </div>
 
             {channels.length > 0 && (
-              <div style={{ marginBottom: "2rem", padding: "1.25rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <h3 style={{ fontSize: "0.85rem", fontWeight: 600, color: "rgba(255,255,255,0.6)", marginTop: 0, marginBottom: "1rem" }}>Create a template</h3>
+              <div style={{ marginBottom: "2rem", padding: "1.25rem", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+                <h3 style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-muted)", marginTop: 0, marginBottom: "1rem" }}>Create a template</h3>
                 {createTemplateError && (
-                  <p style={{ margin: "0 0 0.75rem", fontSize: "0.85em", color: "#f87171" }}>{createTemplateError}</p>
+                  <p style={{ margin: "0 0 0.75rem", fontSize: "0.85em", color: "var(--danger)" }}>{createTemplateError}</p>
                 )}
                 <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
                   <select
                     value={newTemplateChannelId}
                     onChange={e => setNewTemplateChannelId(e.target.value)}
-                    style={{ padding: "0.6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                    style={{ padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                   >
                     <option value="" disabled>Channel…</option>
                     {channels.map(c => <option key={c.id} value={c.id}>{c.displayName}</option>)}
@@ -638,19 +639,19 @@ export default function AdminPage() {
                     placeholder="Name (e.g. order_update)"
                     value={newTemplateName}
                     onChange={e => setNewTemplateName(e.target.value)}
-                    style={{ width: "200px", padding: "0.6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                    style={{ width: "200px", padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                   />
                   <input
                     type="text"
                     placeholder="Language (e.g. en_US)"
                     value={newTemplateLanguage}
                     onChange={e => setNewTemplateLanguage(e.target.value)}
-                    style={{ width: "140px", padding: "0.6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                    style={{ width: "140px", padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                   />
                   <select
                     value={newTemplateCategory}
                     onChange={e => setNewTemplateCategory(e.target.value)}
-                    style={{ padding: "0.6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none" }}
+                    style={{ padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none" }}
                   >
                     <option value="UTILITY">Utility</option>
                     <option value="MARKETING">Marketing</option>
@@ -662,11 +663,11 @@ export default function AdminPage() {
                   value={newTemplateBody}
                   onChange={e => setNewTemplateBody(e.target.value)}
                   rows={3}
-                  style={{ width: "100%", padding: "0.75rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "#fff", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "0.75rem", background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
                 />
                 <button
                   onClick={() => void handleCreateTemplate()}
-                  style={{ marginTop: "0.75rem", padding: "0.6rem 1.25rem", background: "linear-gradient(135deg, #6366f1, #a855f7)", border: "none", borderRadius: "8px", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+                  style={{ marginTop: "0.75rem", padding: "0.6rem 1.25rem", background: "var(--accent)", border: "none", borderRadius: "var(--radius-sm)", color: "var(--text-on-accent)", fontWeight: 700, cursor: "pointer" }}
                 >
                   Create &amp; submit
                 </button>
@@ -678,28 +679,28 @@ export default function AdminPage() {
               const templates = templatesByChannel[channel.id] ?? [];
               return (
                 <div key={channel.id} style={{ marginBottom: "2rem" }}>
-                  <h3 style={{ fontSize: "0.9rem", fontWeight: 600, color: "rgba(255,255,255,0.6)", marginBottom: "0.75rem" }}>{channel.displayName}</h3>
+                  <h3 style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.75rem" }}>{channel.displayName}</h3>
                   {templates.length === 0 ? (
                     <p style={{ opacity: 0.5, fontSize: "0.9em" }}>No templates synced for this channel yet.</p>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                       {templates.map(t => {
                         const statusColor =
-                          t.status === "APPROVED" ? "#4ade80"
-                          : t.status === "REJECTED" ? "#f87171"
-                          : "#facc15";
+                          t.status === "APPROVED" ? "var(--accent)"
+                          : t.status === "REJECTED" ? "var(--danger)"
+                          : "var(--warning)";
                         return (
-                          <div key={t.id} style={{ display: "flex", flexDirection: "column", gap: "0.35rem", padding: "1rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                          <div key={t.id} style={{ display: "flex", flexDirection: "column", gap: "0.35rem", padding: "1rem", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                              <span style={{ color: "#818cf8", fontWeight: 600 }}>{t.name}</span>
+                              <span style={{ color: "var(--accent)", fontWeight: 600 }}>{t.name}</span>
                               <span style={{ opacity: 0.5, fontSize: "0.8em" }}>{t.language}</span>
                               <span style={{ opacity: 0.5, fontSize: "0.8em" }}>{t.category}</span>
-                              <span style={{ marginLeft: "auto", fontSize: "0.75em", padding: "2px 10px", borderRadius: "12px", background: "rgba(255,255,255,0.06)", color: statusColor }}>
+                              <span style={{ marginLeft: "auto", fontSize: "0.75em", padding: "2px 10px", borderRadius: "var(--radius-full)", background: "var(--surface-raised)", color: statusColor }}>
                                 {t.status}
                               </span>
                             </div>
                             {t.status === "REJECTED" && t.rejectionReason && (
-                              <p style={{ margin: 0, fontSize: "0.85em", color: "#f87171" }}>Rejected: {t.rejectionReason}</p>
+                              <p style={{ margin: 0, fontSize: "0.85em", color: "var(--danger)" }}>Rejected: {t.rejectionReason}</p>
                             )}
                             {t.lastSyncedAt && (
                               <p style={{ margin: 0, fontSize: "0.75em", opacity: 0.4 }}>

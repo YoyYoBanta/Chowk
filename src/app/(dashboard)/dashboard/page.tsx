@@ -33,18 +33,52 @@ export default async function DashboardHome() {
       channel: conversation.channel,
       lastMessagePreview: lastMessage ? messagePreviewText(lastMessage) : null,
       lastMessageDirection: lastMessage?.direction ?? null,
+      lastMessageType: lastMessage?.type ?? null,
     };
   });
 
   return (
-    <main style={{ maxWidth: "40rem", margin: "0 auto", padding: "1rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h1>Inbox</h1>
+    <main
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        maxWidth: "34rem",
+        margin: "0 auto",
+        background: "var(--bg)",
+      }}
+    >
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "var(--space-4) var(--space-5)",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+        }}
+      >
+        <h1 style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>Inbox</h1>
         <form action={logoutAction}>
-          <button type="submit">Log out</button>
+          <button
+            type="submit"
+            style={{
+              padding: "0.4rem 0.9rem",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border-strong)",
+              background: "transparent",
+              color: "var(--text-secondary)",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+            }}
+          >
+            Log out
+          </button>
         </form>
+      </header>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <ConversationList initialConversations={initialConversations} initialNextCursor={nextCursor} />
       </div>
-      <ConversationList initialConversations={initialConversations} initialNextCursor={nextCursor} />
     </main>
   );
 }

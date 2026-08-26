@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRealtimeEvents } from "../../_lib/use-realtime-events";
 import { formatRelativeTime } from "@/lib/format/relative-time";
+import { messageTypeIcon } from "@/lib/messages/render";
 import type {
   ConversationListItemDTO,
   ConversationsListResponse,
@@ -134,54 +135,68 @@ export function ConversationList({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#0a0a0b", color: "#e2e2e2", fontFamily: "'Inter', sans-serif" }}>
-      
-      {/* Search Bar */}
-      <div style={{ padding: "1rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-        <input
-          type="text"
-          placeholder="Search conversations..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{
-            width: "100%",
-            padding: "0.8rem 1rem",
-            borderRadius: "20px",
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(0,0,0,0.2)",
-            color: "#fff",
-            fontSize: "0.9em",
-            outline: "none",
-            transition: "border-color 0.2s"
-          }}
-          onFocus={(e) => e.target.style.borderColor = "rgba(99, 102, 241, 0.5)"}
-          onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
-        />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--bg)", color: "var(--text-primary)" }}>
+
+      {/* Search */}
+      <div style={{ padding: "var(--space-4) var(--space-4) var(--space-3)" }}>
+        <div style={{ position: "relative" }}>
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: "var(--space-3)",
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text-muted)",
+              fontSize: "0.9rem",
+              pointerEvents: "none",
+            }}
+          >
+            🔍
+          </span>
+          <input
+            type="text"
+            placeholder="Search conversations"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "0.6rem 0.75rem 0.6rem 2.1rem",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--text-primary)",
+              fontSize: "0.88rem",
+              outline: "none",
+            }}
+          />
+        </div>
       </div>
 
-      {/* Filter Bar */}
-      <div style={{ 
-        padding: "1rem", 
-        borderBottom: "1px solid rgba(255,255,255,0.05)",
-        display: "flex", 
-        gap: "0.5rem",
-        overflowX: "auto"
-      }}>
-        {(["ALL", "UNASSIGNED", "MINE", "CLOSED"] as const).map(f => (
+      {/* Filters */}
+      <div
+        style={{
+          padding: "0 var(--space-4) var(--space-3)",
+          display: "flex",
+          gap: "var(--space-2)",
+          overflowX: "auto",
+        }}
+      >
+        {(["ALL", "UNASSIGNED", "MINE", "CLOSED"] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
             style={{
-              padding: "0.4rem 0.8rem",
-              borderRadius: "20px",
-              border: "none",
-              fontSize: "0.8em",
+              padding: "0.35rem 0.75rem",
+              borderRadius: "var(--radius-full)",
+              border: filter === f ? "1px solid var(--accent-soft-border)" : "1px solid var(--border)",
+              fontSize: "0.78rem",
               fontWeight: 600,
               cursor: "pointer",
-              transition: "all 0.2s",
-              background: filter === f ? "linear-gradient(135deg, #6366f1, #a855f7)" : "rgba(255,255,255,0.05)",
-              color: filter === f ? "#fff" : "rgba(255,255,255,0.6)",
-              boxShadow: filter === f ? "0 2px 10px rgba(99, 102, 241, 0.3)" : "none"
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              background: filter === f ? "var(--accent-soft)" : "transparent",
+              color: filter === f ? "var(--accent)" : "var(--text-secondary)",
             }}
           >
             {f === "ALL" ? "All Open" : f.charAt(0) + f.slice(1).toLowerCase()}
@@ -191,15 +206,7 @@ export function ConversationList({
           <select
             value={channelId}
             onChange={(e) => setChannelId(e.target.value)}
-            style={{
-              padding: "0.4rem 0.6rem",
-              borderRadius: "20px",
-              border: "1px solid rgba(255,255,255,0.1)",
-              background: "rgba(255,255,255,0.05)",
-              color: "rgba(255,255,255,0.7)",
-              fontSize: "0.8em",
-              outline: "none",
-            }}
+            style={selectFilterStyle}
           >
             <option value="">All channels</option>
             {channelOptions.map((c) => (
@@ -211,15 +218,7 @@ export function ConversationList({
           <select
             value={tagId}
             onChange={(e) => setTagId(e.target.value)}
-            style={{
-              padding: "0.4rem 0.6rem",
-              borderRadius: "20px",
-              border: "1px solid rgba(255,255,255,0.1)",
-              background: "rgba(255,255,255,0.05)",
-              color: "rgba(255,255,255,0.7)",
-              fontSize: "0.8em",
-              outline: "none",
-            }}
+            style={selectFilterStyle}
           >
             <option value="">All tags</option>
             {tagOptions.map((t) => (
@@ -229,102 +228,152 @@ export function ConversationList({
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid var(--border)" }}>
         {conversations.length === 0 ? (
-          <p style={{ padding: "2rem", textAlign: "center", opacity: 0.5, fontSize: "0.9em" }}>
-            No {filter.toLowerCase()} conversations.
-          </p>
+          <div style={{ padding: "var(--space-6) var(--space-4)", textAlign: "center" }}>
+            <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+              No {filter === "ALL" ? "open" : filter.toLowerCase()} conversations.
+            </p>
+          </div>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {conversations.map((conversation) => (
-              <li key={conversation.id} style={{ 
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                transition: "background 0.2s"
-              }}>
-                <Link
-                  href={`/dashboard/conversations/${conversation.id}`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "1rem",
-                    padding: "1rem",
-                    textDecoration: "none",
-                    color: "inherit",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                >
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "1rem" }}>
-                    <div style={{
-                      width: "40px",
-                      height: "40px",
-                      borderRadius: "50%",
-                      background: "rgba(99, 102, 241, 0.1)",
-                      color: "#818cf8",
+            {conversations.map((conversation) => {
+              const name = conversation.contact.displayName ?? conversation.contact.name ?? conversation.contact.waId;
+              const icon = conversation.lastMessageType ? messageTypeIcon(conversation.lastMessageType) : null;
+              return (
+                <li key={conversation.id}>
+                  <Link
+                    href={`/dashboard/conversations/${conversation.id}`}
+                    style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: 600,
-                      flexShrink: 0
-                    }}>
-                      {(conversation.contact.displayName ?? conversation.contact.name ?? "U").charAt(0).toUpperCase()}
+                      gap: "var(--space-3)",
+                      padding: "var(--space-3) var(--space-4)",
+                      textDecoration: "none",
+                      color: "inherit",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <div
+                      aria-hidden
+                      style={{
+                        width: "42px",
+                        height: "42px",
+                        borderRadius: "50%",
+                        background: "var(--accent-soft)",
+                        color: "var(--accent)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 700,
+                        fontSize: "0.95rem",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {name.charAt(0).toUpperCase()}
                     </div>
-                    <div>
-                      <div style={{ fontWeight: conversation.unreadCount > 0 ? 600 : 500, color: "#fff" }}>
-                        {conversation.contact.displayName ?? conversation.contact.name ?? conversation.contact.waId}
+
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                        <span
+                          style={{
+                            fontWeight: conversation.unreadCount > 0 ? 700 : 500,
+                            color: "var(--text-primary)",
+                            fontSize: "0.92rem",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {name}
+                        </span>
                         {conversation.isClosingSoon && (
-                          <span style={{ marginLeft: "0.4rem", fontSize: "0.8em" }}>⏰</span>
+                          <span title="Reply window closing soon" style={{ fontSize: "0.75rem", flexShrink: 0 }}>
+                            ⏰
+                          </span>
                         )}
                       </div>
-                      <div style={{ fontSize: "0.85em", opacity: 0.6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: "4px" }}>
+                      <div
+                        style={{
+                          fontSize: "0.82rem",
+                          color: "var(--text-muted)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          marginTop: "2px",
+                        }}
+                      >
                         {conversation.lastMessageDirection === "OUTBOUND" ? "You: " : ""}
+                        {icon ? `${icon} ` : ""}
                         {conversation.lastMessagePreview ?? "No messages yet"}
                       </div>
                     </div>
-                  </div>
-                  <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
-                    <div style={{ fontSize: "0.75em", opacity: 0.5 }}>
-                      {formatRelativeTime(conversation.lastMessageAt)}
-                    </div>
-                    {conversation.unreadCount > 0 && (
-                      <span
-                        style={{
-                          padding: "2px 8px",
-                          borderRadius: "12px",
-                          background: "linear-gradient(135deg, #ef4444, #f97316)",
-                          color: "#fff",
-                          fontSize: "0.7em",
-                          fontWeight: 700,
-                        }}
-                      >
-                        {conversation.unreadCount}
+
+                    <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                        {formatRelativeTime(conversation.lastMessageAt)}
                       </span>
-                    )}
-                  </div>
-                </Link>
-              </li>
-            ))}
+                      {conversation.unreadCount > 0 && (
+                        <span
+                          style={{
+                            minWidth: "18px",
+                            padding: "0 5px",
+                            height: "18px",
+                            borderRadius: "var(--radius-full)",
+                            background: "var(--unread)",
+                            color: "var(--text-on-accent)",
+                            fontSize: "0.68rem",
+                            fontWeight: 700,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {conversation.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
         {nextCursor && (
-          <button 
-            type="button" 
-            onClick={loadMore} 
+          <button
+            type="button"
+            onClick={loadMore}
             disabled={loadingMore}
             style={{
               width: "100%",
-              padding: "1rem",
+              padding: "var(--space-3)",
               background: "transparent",
               border: "none",
-              color: "#818cf8",
+              borderTop: "1px solid var(--border)",
+              color: "var(--accent)",
               fontWeight: 600,
-              cursor: "pointer"
+              fontSize: "0.85rem",
+              cursor: loadingMore ? "default" : "pointer",
+              opacity: loadingMore ? 0.6 : 1,
             }}
           >
-            {loadingMore ? "Loading..." : "Load more"}
+            {loadingMore ? "Loading…" : "Load more"}
           </button>
         )}
       </div>
     </div>
   );
 }
+
+const selectFilterStyle = {
+  padding: "0.35rem 0.5rem",
+  borderRadius: "var(--radius-full)",
+  border: "1px solid var(--border)",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  fontSize: "0.78rem",
+  outline: "none",
+  flexShrink: 0,
+} as const;

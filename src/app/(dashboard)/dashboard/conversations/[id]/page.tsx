@@ -76,16 +76,58 @@ export default async function ConversationThreadPage({
     media: message.media,
   }));
 
+  const name = conversationDTO.contact.displayName ?? conversationDTO.contact.name ?? conversationDTO.contact.waId;
+
   return (
-    <main style={{ maxWidth: "64rem", margin: "0 auto", padding: "1rem" }}>
-      <p>
-        <Link href="/dashboard">&larr; Back to inbox</Link>
-      </p>
-      <div style={{ display: "flex", gap: "1rem" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: "1.2em" }}>
-            {conversationDTO.contact.displayName ?? conversationDTO.contact.name ?? conversationDTO.contact.waId}
-          </h1>
+    <main style={{ height: "100vh", display: "flex", background: "var(--bg)" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            padding: "var(--space-3) var(--space-4)",
+            borderBottom: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
+          <Link
+            href="/dashboard"
+            aria-label="Back to inbox"
+            style={{
+              color: "var(--text-secondary)",
+              textDecoration: "none",
+              fontSize: "1.1rem",
+              lineHeight: 1,
+              padding: "0.25rem",
+            }}
+          >
+            ←
+          </Link>
+          <div
+            aria-hidden
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              background: "var(--accent-soft)",
+              color: "var(--accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              fontSize: "0.85rem",
+              flexShrink: 0,
+            }}
+          >
+            {name.charAt(0).toUpperCase()}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ fontSize: "0.98rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>{name}</h1>
+            <p style={{ margin: 0, fontSize: "0.78rem", color: "var(--text-muted)" }}>+{conversationDTO.contact.waId}</p>
+          </div>
+        </header>
+        <div style={{ flex: 1, minHeight: 0 }}>
           <ThreadView
             conversationId={conversationDTO.id}
             channelId={conversationDTO.channel.id}
@@ -98,8 +140,8 @@ export default async function ConversationThreadPage({
               scroll container — it owns the message list state that
               optimistic-send reconciliation needs to mutate directly. */}
         </div>
-        <ContactPanel conversation={conversationDTO} />
       </div>
+      <ContactPanel conversation={conversationDTO} />
     </main>
   );
 }

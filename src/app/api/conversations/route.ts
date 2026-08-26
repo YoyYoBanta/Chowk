@@ -101,6 +101,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         channel: conversation.channel,
         lastMessagePreview: lastMessage ? messagePreviewText(lastMessage) : null,
         lastMessageDirection: lastMessage?.direction ?? null,
+        lastMessageType: lastMessage?.type ?? null,
       };
     });
 

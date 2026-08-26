@@ -1,13 +1,67 @@
+/*
+ * Chowk dashboard design tokens (2026-08-26 dark-theme pass).
+ *
+ * Every dashboard component still uses React inline `style={{}}` objects
+ * (no Tailwind/CSS-modules in this codebase) — these custom properties are
+ * the single source of truth for color/spacing/radius, referenced from
+ * those inline styles as `"var(--surface)"` etc., rather than each
+ * component hardcoding its own slightly-different hex values (the state
+ * this file replaces: purple/indigo gradients in some components, plain
+ * near-black in others, orange AND red used interchangeably for
+ * "needs attention", no shared spacing scale).
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  /* Neutrals — a cool, slightly blue-green-biased dark scale, not pure
+     black/grey, so it reads as chosen rather than a default #000. */
+  --bg: #0a0d0c;
+  --surface: #121615;
+  --surface-raised: #191f1d;
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --surface-active: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --text-primary: #eef1f0;
+  --text-secondary: rgba(238, 241, 240, 0.64);
+  --text-muted: rgba(238, 241, 240, 0.4);
+  --text-on-accent: #04120c;
+
+  /* Brand accent — a deep WhatsApp-adjacent teal-green, not the literal
+     WhatsApp hex. Used for the primary action, active states, and the
+     "connected/live" signal — never for "needs attention", which gets its
+     own semantic color below. */
+  --accent: #22b57a;
+  --accent-strong: #189a67;
+  --accent-soft: rgba(34, 181, 122, 0.16);
+  --accent-soft-border: rgba(34, 181, 122, 0.32);
+
+  /* Semantic — distinct from the accent on purpose. */
+  --unread: #ff8a4c;
+  --unread-soft: rgba(255, 138, 76, 0.18);
+  --danger: #f2545b;
+  --danger-soft: rgba(242, 84, 91, 0.14);
+  --warning: #e8b23d;
+  --warning-soft: rgba(232, 178, 61, 0.14);
+
+  /* Spacing scale (rem) — sets a consistent rhythm instead of ad hoc
+     0.4rem/0.5rem/0.6rem/0.75rem/0.8rem all appearing for "the same"
+     gap across different components. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.32);
+
+  --background: var(--bg);
+  --foreground: var(--text-primary);
 }
 
 html,
@@ -19,5 +73,39 @@ body {
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Thin, dark-mode-appropriate scrollbars for the scroll containers this
+   app has several of (message thread, conversation list). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }

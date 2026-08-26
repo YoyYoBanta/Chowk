@@ -475,3 +475,92 @@ opt-in, the same category of problem as the private-queue fix above).
 **Follow-up captured in `docker-compose.yml`'s own setup comment**: a
 fresh environment needs `chowk_test` created and migrated once, the same
 one-time-setup category as MinIO's bucket creation.
+
+---
+
+## Dashboard visual redesign (2026-08-26)
+
+The maintainer flagged the dashboard's actual look as "very bad" after
+seeing the real inbox — purple/indigo gradients with no relation to the
+product, inconsistent spacing, an alarming orange unread badge, a
+1990s-style unstyled login page, and a narrow centered column wasting
+most of the screen. Asked for a redesign matching a real WhatsApp CRM
+tool (Double Tick was named as the reference); chose to keep the dark
+theme (not switch to light) and cover the whole dashboard in one pass,
+per the maintainer's own choice when offered both options.
+
+### A CSS custom-property token system in `globals.css`, referenced from inline styles as `var(--token)`
+**Decision:** every color/spacing/radius value used across the dashboard
+now lives once in `:root` (`--bg`, `--surface`, `--accent`, `--danger`,
+`--space-*`, `--radius-*`, etc.) — every component's inline `style={{}}`
+object references these by name instead of hardcoding its own hex value.
+**Why:** this codebase has no Tailwind/CSS-modules (pure inline styles
+throughout), and every component had independently invented its own
+"dark theme" — some used `#111113`, others `#0a0a0b`; some used a
+purple/indigo brand gradient (`#6366f1`/`#a855f7`), others plain white
+text with ad hoc opacity. A shared token file is the smallest change that
+makes every component consistent going forward without introducing a new
+styling architecture (Tailwind, CSS-in-JS, etc.) this project has never
+used — inline styles stay exactly as idiomatic here as before, they just
+stop hardcoding values.
+**Considered and rejected:** a Tailwind migration (real architectural
+change, far beyond what a visual-polish pass needs) and a separate TS
+constants file duplicating the same values (CSS custom properties work
+directly inside a React inline `style` string, so a second source of
+truth would only add drift risk).
+
+### Accent color is a deep teal-green, not the literal WhatsApp green or the prior purple
+**Decision:** `--accent: #22b57a` — WhatsApp/Double-Tick-adjacent, not an
+exact trademark color match, replacing the `#6366f1`→`#a855f7`
+purple-indigo gradient used throughout the prior version.
+**Why:** the maintainer's own reference (Double Tick) and the product's
+subject (a WhatsApp tool) both point toward a green-family accent: purple
+had no connection to either. A flat color rather than a gradient, for the
+same reason spelled out in the artifact-design guidance this project's
+own AI-assisted work follows elsewhere — a gradient-heavy look reads as a
+generic template, not a considered choice.
+**Semantic colors kept separate from the accent**: `--unread` (a warm
+orange, for the conversation-list unread badge), `--danger`, `--warning`
+are distinct hues from `--accent`, not the same green reused for
+everything "notable" — matches this project's own existing precedent of
+naming things by what they mean, not just picking whichever color was
+already in scope.
+
+### `next/font/google` actually loads Inter — it was never loaded before
+**Decision:** `src/app/layout.tsx` now uses `next/font/google`'s `Inter`
+loader, exposed as `--font-inter` and wired into `body`'s `font-family`
+in `globals.css`; the many per-component `fontFamily: "'Inter', ..."`
+inline overrides were removed so they inherit it.
+**Why:** every one of those inline overrides named the literal string
+`'Inter'` — but nothing in the codebase had ever actually loaded that
+font (no `<link>`, no `@font-face`, no `next/font` call anywhere). The
+whole app had been silently falling back to the browser's default UI
+font since M3 first introduced these components. A real, if invisible,
+bug — not a stylistic choice being changed here, a missing font finally
+being loaded.
+
+### Message-list previews drop the `[Type]` bracket convention for a small type icon instead
+**Decision:** `messagePreviewText()` (`src/lib/messages/render.ts`) now
+returns a plain label ("Photo", not "[Photo]"); a new `messageTypeIcon()`
+gives the conversation list a small glyph (📷/🎥/📍/...) to show next to
+it. Required adding `lastMessageType` to `ConversationListItemDTO` (both
+`GET /api/conversations` and the server-rendered first page) since the
+icon needs the real `MessageType`, not just the pre-rendered string.
+**Why:** the bracket convention was a reasonable M3-era placeholder
+(context.md's own "minimal, honest placeholder" instruction), but reads
+as unfinished in a conversation list next to real text previews. The
+in-thread message bubble's own placeholder (`message-bubble.tsx`'s
+`Placeholder` component) keeps its bracket form — that one is a genuine
+"this type isn't fully rendered yet" signal inside a single message, a
+different, still-accurate use of the same convention.
+
+### The inbox/thread pages lost their narrow centered-column layout
+**Decision:** `dashboard/page.tsx` and `dashboard/conversations/[id]/page.tsx`
+now use `height: 100vh` flex layouts instead of `maxWidth: 40rem`/`64rem`
+centered blocks.
+**Why:** a team inbox is a tool used at a desk, all day — centering it in
+a narrow column wastes most of a real monitor's width and reads as an
+unfinished/prototype layout, not a product. No IA change (still separate
+page-per-route navigation, not a persistent split-pane shell) — that
+would be a bigger restructure than a visual-polish pass calls for; the
+maintainer's own stated plan is to keep improving this incrementally.

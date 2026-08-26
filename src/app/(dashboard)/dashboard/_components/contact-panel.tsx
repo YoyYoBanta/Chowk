@@ -190,31 +190,30 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
   };
 
   return (
-    <aside style={{ 
-      width: "320px", 
-      borderLeft: "1px solid rgba(255,255,255,0.08)", 
-      background: "linear-gradient(180deg, #111113 0%, #0d0d0f 100%)",
-      color: "#e2e2e2",
+    <aside style={{
+      width: "300px",
+      flexShrink: 0,
+      borderLeft: "1px solid var(--border)",
+      background: "var(--surface)",
+      color: "var(--text-primary)",
       display: "flex",
       flexDirection: "column",
-      boxShadow: "-8px 0 24px rgba(0,0,0,0.2)",
-      fontFamily: "'Inter', system-ui, sans-serif"
     }}>
       {/* Header */}
-      <div style={{ padding: "1.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <div style={{ 
-            width: "48px", 
-            height: "48px", 
-            borderRadius: "50%", 
-            background: "linear-gradient(135deg, #6366f1, #a855f7)",
+      <div style={{ padding: "var(--space-4)", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+          <div style={{
+            width: "44px",
+            height: "44px",
+            borderRadius: "50%",
+            background: "var(--accent-soft)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "1.2em",
-            fontWeight: 600,
-            color: "#fff",
-            boxShadow: "0 4px 12px rgba(168, 85, 247, 0.4)"
+            fontSize: "1.05rem",
+            fontWeight: 700,
+            color: "var(--accent)",
+            flexShrink: 0,
           }}>
             {(displayName || contact.name || "U").charAt(0).toUpperCase()}
           </div>
@@ -227,18 +226,18 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                 onBlur={() => void handleSaveName()}
                 onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
                 placeholder={contact.name ?? contact.waId}
-                style={{ fontSize: "1.1em", fontWeight: 600, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "6px", padding: "2px 6px", color: "#fff", outline: "none", width: "100%" }}
+                style={{ fontSize: "0.95rem", fontWeight: 700, background: "var(--bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", padding: "2px 6px", color: "var(--text-primary)", outline: "none", width: "100%" }}
               />
             ) : (
               <h2
                 onClick={() => setIsEditingName(true)}
                 title="Click to rename"
-                style={{ fontSize: "1.1em", fontWeight: 600, margin: 0, color: "#fff", cursor: "pointer" }}
+                style={{ fontSize: "0.95rem", fontWeight: 700, margin: 0, color: "var(--text-primary)", cursor: "pointer" }}
               >
                 {displayName || contact.name || contact.waId}
               </h2>
             )}
-            <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.6, marginTop: "4px" }}>
+            <p style={{ margin: "3px 0 0", fontSize: "0.78rem", color: "var(--text-muted)" }}>
               +{contact.waId}
             </p>
           </div>
@@ -246,22 +245,22 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
         {(["details", "notes"] as const).map(tab => (
-          <button 
+          <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             style={{
               flex: 1,
               background: "transparent",
               border: "none",
-              padding: "1rem",
-              color: activeTab === tab ? "#fff" : "rgba(255,255,255,0.5)",
-              fontWeight: activeTab === tab ? 600 : 400,
-              borderBottom: activeTab === tab ? "2px solid #a855f7" : "2px solid transparent",
+              padding: "var(--space-3)",
+              color: activeTab === tab ? "var(--text-primary)" : "var(--text-muted)",
+              fontWeight: activeTab === tab ? 700 : 500,
+              fontSize: "0.85rem",
+              borderBottom: activeTab === tab ? "2px solid var(--accent)" : "2px solid transparent",
               cursor: "pointer",
-              transition: "all 0.2s ease",
-              textTransform: "capitalize"
+              textTransform: "capitalize",
             }}
           >
             {tab}
@@ -270,25 +269,17 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-4)" }}>
         {activeTab === "details" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-            
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
+
             {/* Status & Assignment */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Status</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <label style={fieldLabelStyle}>Status</label>
               <select
                 value={status}
                 onChange={(e) => void handleStatusChange(e.target.value as ConversationStatus)}
-                style={{
-                  padding: "0.75rem",
-                  borderRadius: "8px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  outline: "none",
-                  cursor: "pointer"
-                }}
+                style={selectStyle}
               >
                 {/* Matches context.md §7.3's real ConversationStatus enum
                     exactly (OPEN | DONE) — the previous CLOSED/SNOOZED
@@ -303,20 +294,12 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                 existed with no UI anywhere to actually assign a
                 conversation to someone. Wired to the same PATCH
                 /api/conversations/:id the status select above uses. */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Assigned to</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <label style={fieldLabelStyle}>Assigned to</label>
               <select
                 value={assignedUserId ?? ""}
                 onChange={(e) => void handleAssigneeChange(e.target.value)}
-                style={{
-                  padding: "0.75rem",
-                  borderRadius: "8px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  color: "#fff",
-                  outline: "none",
-                  cursor: "pointer"
-                }}
+                style={selectStyle}
               >
                 <option value="">Unassigned</option>
                 {users.map(u => (
@@ -327,9 +310,9 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
 
             {/* Tags — real data now: fetched from /api/contacts/:id/tags,
                 added/removed through the existing POST/DELETE routes. */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Tags</label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <label style={fieldLabelStyle}>Tags</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
                 {contactTags.map(tag => (
                   <span
                     key={tag.id}
@@ -338,11 +321,11 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                       alignItems: "center",
                       gap: "6px",
                       padding: "4px 10px",
-                      background: "rgba(99, 102, 241, 0.12)",
-                      border: "1px solid rgba(99, 102, 241, 0.25)",
-                      borderRadius: "14px",
-                      color: "#a5b4fc",
-                      fontSize: "0.85em",
+                      background: "var(--accent-soft)",
+                      border: "1px solid var(--accent-soft-border)",
+                      borderRadius: "var(--radius-full)",
+                      color: "var(--accent)",
+                      fontSize: "0.8rem",
                     }}
                   >
                     {tag.name}
@@ -350,29 +333,21 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                       type="button"
                       onClick={() => void handleRemoveTag(tag.id)}
                       aria-label={`Remove ${tag.name}`}
-                      style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: "0.9em", opacity: 0.7 }}
+                      style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: "0.9rem", opacity: 0.75 }}
                     >
                       ×
                     </button>
                   </span>
                 ))}
                 {contactTags.length === 0 && (
-                  <span style={{ fontSize: "0.85em", opacity: 0.4 }}>No tags yet.</span>
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>No tags yet.</span>
                 )}
               </div>
               {allTags.length > 0 && (
                 <select
                   value={tagPickerValue}
                   onChange={(e) => void handleAddTag(e.target.value)}
-                  style={{
-                    padding: "0.6rem",
-                    borderRadius: "8px",
-                    background: "rgba(255,255,255,0.05)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "#fff",
-                    outline: "none",
-                    cursor: "pointer"
-                  }}
+                  style={selectStyle}
                 >
                   <option value="" disabled>Add a tag…</option>
                   {allTags
@@ -390,30 +365,23 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                 definition.key) and save through PATCH /api/contacts/:id
                 (which validates each value against its declared FieldType
                 server-side — see src/lib/custom-fields/validate.ts). */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              <label style={{ fontSize: "0.75em", textTransform: "uppercase", letterSpacing: "1px", opacity: 0.5, fontWeight: 600 }}>Custom Fields</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <label style={fieldLabelStyle}>Custom Fields</label>
               {customFieldError && (
-                <p style={{ margin: 0, fontSize: "0.8em", color: "#f87171" }}>{customFieldError}</p>
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--danger)" }}>{customFieldError}</p>
               )}
               {fieldDefs.length === 0 ? (
-                <p style={{ margin: 0, fontSize: "0.85em", opacity: 0.5 }}>No custom fields defined for this organization yet.</p>
+                <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text-muted)" }}>No custom fields defined for this organization yet.</p>
               ) : (
                 fieldDefs.map(def => (
-                  <div key={def.id} style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-                    <label htmlFor={`cf-${def.key}`} style={{ fontSize: "0.75em", opacity: 0.6 }}>{def.label}</label>
+                  <div key={def.id} style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                    <label htmlFor={`cf-${def.key}`} style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{def.label}</label>
                     {def.type === "LIST" && def.options ? (
                       <select
                         id={`cf-${def.key}`}
                         value={typeof customFields[def.key] === "string" ? (customFields[def.key] as string) : ""}
                         onChange={(e) => void handleCustomFieldChange(def.key, e.target.value)}
-                        style={{
-                          padding: "0.6rem",
-                          borderRadius: "8px",
-                          background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          color: "#fff",
-                          outline: "none",
-                        }}
+                        style={selectStyle}
                       >
                         <option value="">—</option>
                         {def.options.map(opt => (
@@ -426,14 +394,7 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
                         type={def.type === "NUMBER" ? "number" : def.type === "DATE" ? "date" : "text"}
                         value={typeof customFields[def.key] === "string" || typeof customFields[def.key] === "number" ? String(customFields[def.key]) : ""}
                         onChange={(e) => void handleCustomFieldChange(def.key, e.target.value)}
-                        style={{
-                          padding: "0.6rem",
-                          borderRadius: "8px",
-                          background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          color: "#fff",
-                          outline: "none",
-                        }}
+                        style={inputStyle}
                       />
                     )}
                   </div>
@@ -445,55 +406,46 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
         )}
 
         {activeTab === "notes" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <textarea 
-                placeholder="Leave a private note..." 
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <textarea
+                placeholder="Leave a private note…"
                 value={newNote}
                 onChange={e => setNewNote(e.target.value)}
                 rows={3}
-                style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  padding: "0.75rem",
-                  color: "#fff",
-                  outline: "none",
-                  resize: "vertical",
-                  fontFamily: "inherit"
-                }}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
               />
-              <button 
+              <button
                 onClick={handleAddNote}
                 disabled={isSubmitting || !newNote.trim()}
                 style={{
-                  background: "linear-gradient(135deg, #6366f1, #a855f7)",
+                  background: "var(--accent)",
                   border: "none",
-                  borderRadius: "8px",
-                  padding: "0.6rem",
-                  color: "#fff",
-                  fontWeight: 600,
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.55rem",
+                  color: "var(--text-on-accent)",
+                  fontWeight: 700,
+                  fontSize: "0.85rem",
                   cursor: "pointer",
                   opacity: (isSubmitting || !newNote.trim()) ? 0.5 : 1,
-                  transition: "opacity 0.2s"
                 }}
               >
                 Add Note
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
               {notes.length === 0 ? (
-                <p style={{ opacity: 0.5, fontSize: "0.85em", textAlign: "center", marginTop: "2rem" }}>No notes yet.</p>
+                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", marginTop: "var(--space-5)" }}>No notes yet.</p>
               ) : notes.map(note => (
-                <div key={note.id} style={{ 
-                  background: "rgba(255,255,255,0.03)", 
-                  padding: "1rem", 
-                  borderRadius: "8px",
-                  borderLeft: "3px solid #6366f1"
+                <div key={note.id} style={{
+                  background: "var(--bg)",
+                  padding: "var(--space-3)",
+                  borderRadius: "var(--radius-sm)",
+                  borderLeft: "3px solid var(--accent)",
                 }}>
-                  <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.9em", lineHeight: 1.4 }}>{note.body}</p>
-                  <span style={{ fontSize: "0.7em", opacity: 0.5 }}>
+                  <p style={{ margin: "0 0 0.4rem 0", fontSize: "0.88rem", lineHeight: 1.4, color: "var(--text-primary)" }}>{note.body}</p>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
                     {note.authorName} &middot; {new Date(note.createdAt).toLocaleString()}
                   </span>
                 </div>
@@ -505,3 +457,32 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
     </aside>
   );
 }
+
+const fieldLabelStyle = {
+  fontSize: "0.72rem",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  color: "var(--text-muted)",
+  fontWeight: 600,
+} as const;
+
+const selectStyle = {
+  padding: "0.6rem",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  color: "var(--text-primary)",
+  outline: "none",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+} as const;
+
+const inputStyle = {
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  padding: "0.6rem",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontSize: "0.85rem",
+} as const;

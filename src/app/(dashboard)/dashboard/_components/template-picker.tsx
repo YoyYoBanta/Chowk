@@ -10,6 +10,24 @@ interface Template {
   body: string;
 }
 
+const panelStyle = {
+  padding: "var(--space-4)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--surface)",
+  color: "var(--text-primary)",
+} as const;
+
+const secondaryButtonStyle = {
+  padding: "0.5rem 1rem",
+  background: "transparent",
+  border: "1px solid var(--border-strong)",
+  borderRadius: "var(--radius-sm)",
+  color: "var(--text-secondary)",
+  fontSize: "0.85rem",
+  cursor: "pointer",
+} as const;
+
 export function TemplatePicker({
   channelId,
   onSelect,
@@ -44,7 +62,7 @@ export function TemplatePicker({
 
   const handleTemplateSelect = (t: Template) => {
     setSelectedTemplate(t);
-    
+
     // Simple extraction of variables like {{1}}, {{2}} from body
     const matches = t.body.match(/\{\{(\w+)\}\}/g);
     if (matches) {
@@ -65,38 +83,52 @@ export function TemplatePicker({
   };
 
   if (loading) {
-    return <div style={{ padding: "1rem", border: "1px solid var(--border, #e5e5e5)", borderRadius: "0.5rem" }}>Loading templates...</div>;
+    return <div style={panelStyle}>Loading templates…</div>;
   }
 
   if (templates.length === 0) {
     return (
-      <div style={{ padding: "1rem", border: "1px solid var(--border, #e5e5e5)", borderRadius: "0.5rem" }}>
-        <p>No approved templates found for this channel.</p>
-        <button onClick={onCancel} type="button">Cancel</button>
+      <div style={panelStyle}>
+        <p style={{ margin: "0 0 var(--space-3)", color: "var(--text-secondary)" }}>
+          No approved templates found for this channel.
+        </p>
+        <button onClick={onCancel} type="button" style={secondaryButtonStyle}>Cancel</button>
       </div>
     );
   }
 
   if (!selectedTemplate) {
     return (
-      <div style={{ padding: "1rem", border: "1px solid var(--border, #e5e5e5)", borderRadius: "0.5rem" }}>
-        <h3 style={{ marginTop: 0 }}>Select a Template</h3>
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+      <div style={panelStyle}>
+        <h3 style={{ marginTop: 0, marginBottom: "var(--space-3)", fontSize: "0.95rem", fontWeight: 700 }}>Select a template</h3>
+        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
           {templates.map(t => (
             <li key={t.name}>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => handleTemplateSelect(t)}
-                style={{ width: "100%", textAlign: "left", padding: "0.5rem", background: "none", border: "1px solid var(--border, #e5e5e5)", cursor: "pointer", borderRadius: "0.25rem" }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "var(--space-3)",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  cursor: "pointer",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text-primary)",
+                }}
               >
-                <strong>{t.name}</strong> ({t.languageCode})
-                <br/>
-                <small style={{ opacity: 0.7 }}>{t.body}</small>
+                <strong style={{ fontSize: "0.88rem" }}>{t.name}</strong>{" "}
+                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>({t.languageCode})</span>
+                <br />
+                <small style={{ color: "var(--text-secondary)" }}>{t.body}</small>
               </button>
             </li>
           ))}
         </ul>
-        <button onClick={onCancel} type="button" style={{ marginTop: "1rem" }}>Cancel</button>
+        <button onClick={onCancel} type="button" style={{ ...secondaryButtonStyle, marginTop: "var(--space-4)" }}>
+          Cancel
+        </button>
       </div>
     );
   }
@@ -111,37 +143,64 @@ export function TemplatePicker({
   );
 
   return (
-    <div style={{ padding: "1rem", border: "1px solid var(--border, #e5e5e5)", borderRadius: "0.5rem" }}>
-      <h3 style={{ marginTop: 0 }}>Fill variables for {selectedTemplate.name}</h3>
-      <div style={{ marginBottom: "1rem", padding: "0.5rem", backgroundColor: "var(--background-secondary, #f5f5f5)", borderRadius: "0.25rem" }}>
-        <p style={{ margin: "0 0 0.25rem", fontSize: "0.7em", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.5 }}>Preview</p>
-        <p style={{ margin: 0, fontSize: "0.9em", whiteSpace: "pre-wrap" }}>
+    <div style={panelStyle}>
+      <h3 style={{ marginTop: 0, marginBottom: "var(--space-3)", fontSize: "0.95rem", fontWeight: 700 }}>
+        Fill variables for {selectedTemplate.name}
+      </h3>
+      <div style={{ marginBottom: "var(--space-4)", padding: "var(--space-3)", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+        <p style={{ margin: "0 0 var(--space-1)", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>
+          Preview
+        </p>
+        <p style={{ margin: 0, fontSize: "0.88rem", whiteSpace: "pre-wrap", color: "var(--text-primary)" }}>
           {previewBody}
         </p>
       </div>
 
       {Object.keys(variables).length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
           {Object.keys(variables).map(key => (
-            <div key={key} style={{ display: "flex", flexDirection: "column" }}>
-              <label htmlFor={`var-${key}`} style={{ fontSize: "0.8em", marginBottom: "0.25rem" }}>{`{{${key}}}`}</label>
-              <input 
+            <div key={key} style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <label htmlFor={`var-${key}`} style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{`{{${key}}}`}</label>
+              <input
                 id={`var-${key}`}
-                type="text" 
+                type="text"
                 value={variables[key]}
                 onChange={e => setVariables({...variables, [key]: e.target.value})}
                 placeholder={`Value for ${key}`}
-                style={{ padding: "0.25rem 0.5rem", borderRadius: "0.25rem", border: "1px solid var(--border, #e5e5e5)" }}
+                style={{
+                  padding: "0.5rem 0.65rem",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--bg)",
+                  color: "var(--text-primary)",
+                  fontSize: "0.88rem",
+                  outline: "none",
+                }}
               />
             </div>
           ))}
         </div>
       )}
-      
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button type="button" onClick={handleSend} style={{ backgroundColor: "var(--primary, #005c4b)", color: "white", padding: "0.5rem 1rem", border: "none", borderRadius: "0.25rem", cursor: "pointer" }}>Send</button>
-        <button type="button" onClick={() => setSelectedTemplate(null)}>Back</button>
-        <button type="button" onClick={onCancel}>Cancel</button>
+
+      <div style={{ display: "flex", gap: "var(--space-2)" }}>
+        <button
+          type="button"
+          onClick={handleSend}
+          style={{
+            background: "var(--accent)",
+            color: "var(--text-on-accent)",
+            padding: "0.55rem 1.1rem",
+            border: "none",
+            borderRadius: "var(--radius-sm)",
+            fontWeight: 700,
+            fontSize: "0.85rem",
+            cursor: "pointer",
+          }}
+        >
+          Send
+        </button>
+        <button type="button" onClick={() => setSelectedTemplate(null)} style={secondaryButtonStyle}>Back</button>
+        <button type="button" onClick={onCancel} style={secondaryButtonStyle}>Cancel</button>
       </div>
     </div>
   );

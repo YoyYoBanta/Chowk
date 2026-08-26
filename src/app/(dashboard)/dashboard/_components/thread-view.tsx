@@ -301,40 +301,42 @@ export function ThreadView({
   }, []);
 
   return (
-    <div>
-      <div style={{ padding: "0.5rem 0.75rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "var(--space-2) var(--space-3)", display: "flex", alignItems: "center", gap: "var(--space-2)", borderBottom: "1px solid var(--border)" }}>
         <input
           type="search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search this conversation..."
+          placeholder="Search this conversation"
           style={{
             flex: 1,
-            padding: "0.5rem 0.75rem",
-            borderRadius: "8px",
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(255,255,255,0.03)",
-            color: "#fff",
-            fontSize: "0.85em",
+            padding: "0.45rem 0.7rem",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            color: "var(--text-primary)",
+            fontSize: "0.83rem",
             outline: "none",
           }}
         />
         {isSearchActive && (
-          <span style={{ fontSize: "0.8em", opacity: 0.5, whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
             {isSearching ? "Searching…" : `${searchResults.length} match${searchResults.length === 1 ? "" : "es"}`}
           </span>
         )}
       </div>
       <div
         ref={scrollContainerRef}
-        style={{ height: "70vh", overflowY: "auto", display: "flex", flexDirection: "column", padding: "0.5rem" }}
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", padding: "var(--space-3)" }}
       >
         {!isSearchActive && <div ref={topSentinelRef} />}
         {!isSearchActive && loadingOlder && (
-          <p style={{ textAlign: "center", fontSize: "0.8em", opacity: 0.6 }}>Loading older messages...</p>
+          <p style={{ textAlign: "center", fontSize: "0.8rem", color: "var(--text-muted)" }}>Loading older messages…</p>
         )}
         {visibleMessages.length === 0 && (
-          <p style={{ opacity: 0.6 }}>{isSearchActive ? "No messages match your search." : "No messages yet."}</p>
+          <p style={{ color: "var(--text-muted)", textAlign: "center", marginTop: "var(--space-6)" }}>
+            {isSearchActive ? "No messages match your search." : "No messages yet."}
+          </p>
         )}
         {visibleMessages.map((message) => (
           <MessageBubble key={message.id} message={message} />

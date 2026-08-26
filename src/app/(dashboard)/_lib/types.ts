@@ -30,6 +30,10 @@ export interface ConversationListItemDTO {
   };
   lastMessagePreview: string | null;
   lastMessageDirection: Direction | null;
+  /** So the list row can show a small type icon (📷/🎥/📍/...) next to a
+   * non-text preview instead of relying on punctuation alone — see
+   * src/lib/messages/render.ts's messageTypeIcon. */
+  lastMessageType: MessageType | null;
 }
 
 export interface ConversationsListResponse {

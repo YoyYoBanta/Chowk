@@ -278,7 +278,7 @@ export function Composer({
   // still works, e.g. a structured order-update template).
   if (showTemplatePicker) {
     return (
-      <div style={{ padding: "0.75rem", borderTop: "1px solid var(--border, #e5e5e5)" }}>
+      <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
         <TemplatePicker
           channelId={channelId}
           onSelect={(name, lang, vars) => {
@@ -300,40 +300,38 @@ export function Composer({
         <div style={{
           position: "absolute",
           bottom: "100%",
-          left: "0.75rem",
-          marginBottom: "0.5rem",
-          background: "#111113",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: "8px",
-          boxShadow: "0 -4px 24px rgba(0,0,0,0.4)",
+          left: "var(--space-3)",
+          marginBottom: "var(--space-2)",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-md)",
+          boxShadow: "var(--shadow-panel)",
           width: "300px",
           maxHeight: "250px",
           overflowY: "auto",
           zIndex: 50,
-          color: "#fff",
-          fontFamily: "'Inter', sans-serif"
+          color: "var(--text-primary)",
         }}>
-          <div style={{ padding: "0.5rem 0.75rem", fontSize: "0.75em", opacity: 0.5, borderBottom: "1px solid rgba(255,255,255,0.05)", textTransform: "uppercase", letterSpacing: "1px" }}>
+          <div style={{ padding: "0.5rem 0.75rem", fontSize: "0.7rem", color: "var(--text-muted)", borderBottom: "1px solid var(--border)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             Quick Replies
           </div>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {filteredQuickReplies.map((qr, idx) => (
-              <li 
+              <li
                 key={qr.id}
                 onClick={() => applyQuickReply(qr)}
                 onMouseEnter={() => setSelectedIndex(idx)}
                 style={{
-                  padding: "0.75rem",
+                  padding: "var(--space-3)",
                   cursor: "pointer",
-                  background: selectedIndex === idx ? "rgba(99, 102, 241, 0.2)" : "transparent",
-                  borderLeft: selectedIndex === idx ? "3px solid #818cf8" : "3px solid transparent",
-                  transition: "background 0.1s"
+                  background: selectedIndex === idx ? "var(--accent-soft)" : "transparent",
+                  borderLeft: selectedIndex === idx ? "3px solid var(--accent)" : "3px solid transparent",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong style={{ fontSize: "0.85em", color: "#818cf8" }}>/{qr.shortcut}</strong>
+                  <strong style={{ fontSize: "0.83rem", color: "var(--accent)" }}>/{qr.shortcut}</strong>
                 </div>
-                <div style={{ fontSize: "0.85em", opacity: 0.8, marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div style={{ fontSize: "0.83rem", color: "var(--text-secondary)", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {qr.body}
                 </div>
               </li>
@@ -344,10 +342,10 @@ export function Composer({
 
       <div
         style={{
-          borderTop: "1px solid var(--border, #e5e5e5)",
-          padding: "0.75rem",
+          borderTop: "1px solid var(--border)",
+          padding: "var(--space-3)",
           display: "flex",
-          gap: "0.5rem",
+          gap: "var(--space-2)",
           alignItems: "flex-end",
         }}
       >
@@ -355,19 +353,19 @@ export function Composer({
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Press '/' for quick replies)"
+          placeholder="Type a message… (Press '/' for quick replies)"
           rows={2}
           disabled={sending}
           style={{
             flex: 1,
             resize: "none",
-            padding: "0.75rem",
-            borderRadius: "0.5rem",
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(255,255,255,0.02)",
-            color: "#fff",
+            padding: "0.65rem 0.75rem",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border-strong)",
+            background: "var(--surface)",
+            color: "var(--text-primary)",
             font: "inherit",
-            boxShadow: "inset 0 2px 4px rgba(0,0,0,0.1)"
+            outline: "none",
           }}
         />
         <input
@@ -383,14 +381,7 @@ export function Composer({
           disabled={sending}
           title="Attach a file"
           aria-label="Attach a file"
-          style={{
-            padding: "0.75rem",
-            background: "rgba(255,255,255,0.05)",
-            border: "none",
-            borderRadius: "0.5rem",
-            cursor: "pointer",
-            fontSize: "1.2em"
-          }}
+          style={composerIconButtonStyle}
         >
           📎
         </button>
@@ -400,14 +391,7 @@ export function Composer({
           disabled={sending}
           title="Send a template message"
           aria-label="Send a template message"
-          style={{
-            padding: "0.75rem",
-            background: "rgba(255,255,255,0.05)",
-            border: "none",
-            borderRadius: "0.5rem",
-            cursor: "pointer",
-            fontSize: "1.2em"
-          }}
+          style={composerIconButtonStyle}
         >
           📄
         </button>
@@ -416,22 +400,32 @@ export function Composer({
           onClick={() => void handleSend()}
           disabled={sending || !text.trim()}
           style={{
-            padding: "0.75rem 1.5rem",
-            background: (sending || !text.trim()) ? "rgba(255,255,255,0.1)" : "linear-gradient(135deg, #6366f1, #a855f7)",
-            color: (sending || !text.trim()) ? "rgba(255,255,255,0.3)" : "#fff",
+            padding: "0.65rem 1.25rem",
+            background: (sending || !text.trim()) ? "var(--surface-active)" : "var(--accent)",
+            color: (sending || !text.trim()) ? "var(--text-muted)" : "var(--text-on-accent)",
             border: "none",
-            borderRadius: "0.5rem",
-            fontWeight: 600,
+            borderRadius: "var(--radius-sm)",
+            fontWeight: 700,
+            fontSize: "0.88rem",
             cursor: (sending || !text.trim()) ? "not-allowed" : "pointer",
-            transition: "all 0.2s"
           }}
         >
-          {sending ? "Sending..." : "Send"}
+          {sending ? "Sending…" : "Send"}
         </button>
       </div>
     </div>
   );
 }
+
+const composerIconButtonStyle = {
+  padding: "0.65rem",
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  fontSize: "1.05rem",
+  color: "var(--text-secondary)",
+} as const;
 
 function ClosedWindowComposer({
   channelId,
@@ -446,9 +440,9 @@ function ClosedWindowComposer({
 
   if (showPicker) {
     return (
-      <div style={{ padding: "0.75rem", borderTop: "1px solid var(--border, #e5e5e5)" }}>
-        <TemplatePicker 
-          channelId={channelId} 
+      <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border)" }}>
+        <TemplatePicker
+          channelId={channelId}
           onSelect={(name, lang, vars) => {
             setShowPicker(false);
             onSend(name, lang, vars);
@@ -462,17 +456,18 @@ function ClosedWindowComposer({
   return (
     <div
       style={{
-        borderTop: "1px solid rgba(255,255,255,0.1)",
-        padding: "0.75rem",
+        borderTop: "1px solid var(--border)",
+        padding: "var(--space-3)",
         display: "flex",
         flexDirection: "column",
-        gap: "0.5rem",
+        gap: "var(--space-2)",
+        background: "var(--warning-soft)",
       }}
     >
-      <p style={{ margin: 0, fontSize: "0.9em", opacity: 0.6, color: "#fff" }}>
+      <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--warning)" }}>
         The 24-hour reply window has closed. You can only send an approved template message.
       </p>
-      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
         <textarea
           value=""
           disabled
@@ -481,28 +476,29 @@ function ClosedWindowComposer({
           style={{
             flex: 1,
             resize: "none",
-            padding: "0.75rem",
-            borderRadius: "0.5rem",
-            border: "1px solid rgba(255,255,255,0.05)",
-            background: "rgba(0,0,0,0.2)",
-            color: "#fff",
+            padding: "0.65rem 0.75rem",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border)",
+            background: "var(--bg)",
+            color: "var(--text-muted)",
             font: "inherit",
-            opacity: 0.4,
           }}
         />
-        <button 
-          type="button" 
-          onClick={() => setShowPicker(true)} 
-          disabled={disabled} 
+        <button
+          type="button"
+          onClick={() => setShowPicker(true)}
+          disabled={disabled}
           title="Send a template message"
           style={{
-            padding: "0.75rem 1.5rem",
-            background: "rgba(255,255,255,0.1)",
-            color: "#fff",
+            padding: "0.65rem 1.25rem",
+            background: "var(--accent)",
+            color: "var(--text-on-accent)",
             border: "none",
-            borderRadius: "0.5rem",
-            fontWeight: 600,
-            cursor: disabled ? "not-allowed" : "pointer"
+            borderRadius: "var(--radius-sm)",
+            fontWeight: 700,
+            fontSize: "0.85rem",
+            cursor: disabled ? "not-allowed" : "pointer",
+            whiteSpace: "nowrap",
           }}
         >
           Send a template
@@ -525,7 +521,7 @@ function WindowCountdown({ closesAt }: { closesAt: string | null }) {
   if (remainingMs <= 0) return null;
 
   return (
-    <p style={{ margin: "0 0.75rem", fontSize: "0.8em", color: "#f59e0b", fontWeight: 500, position: "absolute", top: "-1.5rem", left: "0" }}>
+    <p style={{ margin: "0 var(--space-3)", fontSize: "0.78rem", color: "var(--warning)", fontWeight: 600, position: "absolute", top: "-1.5rem", left: "0" }}>
       Window closes in {formatDurationShort(remainingMs)}
     </p>
   );

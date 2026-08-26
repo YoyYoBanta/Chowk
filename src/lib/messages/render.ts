@@ -34,12 +34,34 @@ export function messageTypeLabel(type: MessageType): string {
   return TYPE_LABELS[type] ?? "Unsupported message";
 }
 
-/** One-line preview for a conversation list row. */
+/** Small glyph the conversation list row shows next to a non-text
+ * preview — e.g. "📷 Photo" instead of the old plain "[Photo]" bracket
+ * placeholder. Deliberately not used for the in-thread message bubble
+ * itself (message-bubble.tsx keeps its own richer per-type rendering);
+ * this is only for the one-line list-row summary. */
+const TYPE_ICONS: Partial<Record<MessageType, string>> = {
+  IMAGE: "📷",
+  VIDEO: "🎥",
+  AUDIO: "🎵",
+  DOCUMENT: "📄",
+  STICKER: "🌟",
+  LOCATION: "📍",
+  CONTACTS: "👤",
+  TEMPLATE: "📋",
+};
+
+export function messageTypeIcon(type: MessageType): string | null {
+  return TYPE_ICONS[type] ?? null;
+}
+
+/** One-line preview for a conversation list row. No brackets — the icon
+ * (messageTypeIcon above) is what visually distinguishes a non-text
+ * preview from the plain-text case now, not punctuation. */
 export function messagePreviewText(message: { type: MessageType; body: string | null }): string {
   if (message.type === "TEXT" && message.body) {
     return message.body.length > 120 ? `${message.body.slice(0, 117)}...` : message.body;
   }
-  return `[${messageTypeLabel(message.type)}]`;
+  return messageTypeLabel(message.type);
 }
 
 export function isOutbound(direction: Direction): boolean {
