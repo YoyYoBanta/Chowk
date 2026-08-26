@@ -34,6 +34,9 @@ export interface ConversationListItemDTO {
    * non-text preview instead of relying on punctuation alone — see
    * src/lib/messages/render.ts's messageTypeIcon. */
   lastMessageType: MessageType | null;
+  /** So an OUTBOUND preview can show a tick indicator (✓/✓✓, WhatsApp-style)
+   * — null for an INBOUND last message, where a tick has no meaning. */
+  lastMessageStatus: string | null;
 }
 
 export interface ConversationsListResponse {

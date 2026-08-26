@@ -102,6 +102,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         lastMessagePreview: lastMessage ? messagePreviewText(lastMessage) : null,
         lastMessageDirection: lastMessage?.direction ?? null,
         lastMessageType: lastMessage?.type ?? null,
+        lastMessageStatus: lastMessage?.status ?? null,
       };
     });
 

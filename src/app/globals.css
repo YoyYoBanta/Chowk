@@ -1,47 +1,50 @@
 /*
- * Chowk dashboard design tokens (2026-08-26 dark-theme pass).
+ * Chowk dashboard design tokens (2026-08-26, light-theme pass — matches
+ * the maintainer's own WhatsApp Business Web reference screenshot).
  *
  * Every dashboard component still uses React inline `style={{}}` objects
  * (no Tailwind/CSS-modules in this codebase) — these custom properties are
  * the single source of truth for color/spacing/radius, referenced from
- * those inline styles as `"var(--surface)"` etc., rather than each
- * component hardcoding its own slightly-different hex values (the state
- * this file replaces: purple/indigo gradients in some components, plain
- * near-black in others, orange AND red used interchangeably for
- * "needs attention", no shared spacing scale).
+ * those inline styles as `"var(--surface)"` etc. Switching the whole app's
+ * theme is a matter of redefining the values below, not touching every
+ * component — that's the point of routing every color through a token
+ * rather than a hardcoded hex.
  */
 :root {
-  /* Neutrals — a cool, slightly blue-green-biased dark scale, not pure
-     black/grey, so it reads as chosen rather than a default #000. */
-  --bg: #0a0d0c;
-  --surface: #121615;
-  --surface-raised: #191f1d;
-  --surface-hover: rgba(255, 255, 255, 0.045);
-  --surface-active: rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  /* Neutrals — WhatsApp Web's own real palette: a very light warm-grey
+     app background, pure white panels/cards, near-black (not pure #000)
+     text. */
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --surface-raised: #f7f8fa;
+  --surface-hover: #f5f6f6;
+  --surface-active: #e9edef;
+  --border: #e9edef;
+  --border-strong: #d1d7db;
 
-  --text-primary: #eef1f0;
-  --text-secondary: rgba(238, 241, 240, 0.64);
-  --text-muted: rgba(238, 241, 240, 0.4);
-  --text-on-accent: #04120c;
+  --text-primary: #111b21;
+  --text-secondary: #667781;
+  --text-muted: #8696a0;
+  --text-on-accent: #ffffff;
 
-  /* Brand accent — a deep WhatsApp-adjacent teal-green, not the literal
-     WhatsApp hex. Used for the primary action, active states, and the
-     "connected/live" signal — never for "needs attention", which gets its
-     own semantic color below. */
-  --accent: #22b57a;
-  --accent-strong: #189a67;
-  --accent-soft: rgba(34, 181, 122, 0.16);
-  --accent-soft-border: rgba(34, 181, 122, 0.32);
+  /* Brand accent — WhatsApp's own real teal, appropriate now that the
+     product is deliberately matching WhatsApp Web/Business's look. Used
+     for the primary action, active states, unread badges (WhatsApp's own
+     unread count is this same green, not a separate "attention" color). */
+  --accent: #00a884;
+  --accent-strong: #008a6d;
+  --accent-soft: rgba(0, 168, 132, 0.12);
+  --accent-soft-border: rgba(0, 168, 132, 0.3);
 
-  /* Semantic — distinct from the accent on purpose. */
-  --unread: #ff8a4c;
-  --unread-soft: rgba(255, 138, 76, 0.18);
-  --danger: #f2545b;
-  --danger-soft: rgba(242, 84, 91, 0.14);
-  --warning: #e8b23d;
-  --warning-soft: rgba(232, 178, 61, 0.14);
+  /* Semantic — distinct from the accent where WhatsApp's own UI also
+     keeps them distinct (errors, the closing-soon warning). Unread counts
+     intentionally reuse --accent above, matching the reference exactly. */
+  --unread: var(--accent);
+  --unread-soft: var(--accent-soft);
+  --danger: #d3435c;
+  --danger-soft: rgba(211, 67, 92, 0.1);
+  --warning: #b5730a;
+  --warning-soft: rgba(181, 115, 10, 0.12);
 
   /* Spacing scale (rem) — sets a consistent rhythm instead of ad hoc
      0.4rem/0.5rem/0.6rem/0.75rem/0.8rem all appearing for "the same"
@@ -58,7 +61,7 @@
   --radius-lg: 14px;
   --radius-full: 999px;
 
-  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.32);
+  --shadow-panel: 0 1px 2px rgba(11, 20, 26, 0.06), 0 8px 24px rgba(11, 20, 26, 0.08);
 
   --background: var(--bg);
   --foreground: var(--text-primary);
@@ -85,8 +88,8 @@ body {
   background: var(--accent-soft);
 }
 
-/* Thin, dark-mode-appropriate scrollbars for the scroll containers this
-   app has several of (message thread, conversation list). */
+/* Thin scrollbars for the scroll containers this app has several of
+   (message thread, conversation list, nav rail overflow). */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;

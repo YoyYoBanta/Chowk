@@ -281,7 +281,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div style={{ padding: "var(--space-6)", background: "var(--bg)", minHeight: "100vh", color: "var(--text-primary)" }}>
+    <div style={{ padding: "var(--space-6)", background: "var(--bg)", height: "100%", overflowY: "auto", color: "var(--text-primary)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-5)" }}>
         <h1 style={{ fontSize: "1.5rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
           Admin Settings

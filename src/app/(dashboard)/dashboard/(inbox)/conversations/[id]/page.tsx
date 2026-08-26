@@ -1,13 +1,12 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/auth/guard";
 import { getConversationWithContact } from "@/data/conversations";
 import { listMessagesPage } from "@/data/messages";
 import { attachMediaSummaries } from "@/data/media";
 import { getWindowState } from "@/services/window";
-import { ThreadView } from "../../_components/thread-view";
-import { ContactPanel } from "../../_components/contact-panel";
-import type { ConversationDetailDTO, MessageDTO } from "../../../_lib/types";
+import { ThreadView } from "../../../_components/thread-view";
+import { ContactPanel } from "../../../_components/contact-panel";
+import type { ConversationDetailDTO, MessageDTO } from "../../../../_lib/types";
 
 /**
  * Thread page (context.md §10.3 + §10.5): the message history for one
@@ -15,6 +14,10 @@ import type { ConversationDetailDTO, MessageDTO } from "../../../_lib/types";
  * `getConversationWithContact` itself (organizationId-scoped lookup) —
  * a conversation id from another org resolves to null here and 404s,
  * exactly like the API route's own tenancy test.
+ *
+ * Renders as the main pane next to the always-visible conversation list
+ * (`(inbox)/layout.tsx`) — no back arrow or list of its own anymore, since
+ * the list never leaves the screen in this layout.
  */
 export default async function ConversationThreadPage({
   params,
@@ -79,7 +82,7 @@ export default async function ConversationThreadPage({
   const name = conversationDTO.contact.displayName ?? conversationDTO.contact.name ?? conversationDTO.contact.waId;
 
   return (
-    <main style={{ height: "100vh", display: "flex", background: "var(--bg)" }}>
+    <div style={{ height: "100%", display: "flex", background: "var(--bg)" }}>
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <header
           style={{
@@ -89,21 +92,9 @@ export default async function ConversationThreadPage({
             padding: "var(--space-3) var(--space-4)",
             borderBottom: "1px solid var(--border)",
             flexShrink: 0,
+            background: "var(--surface)",
           }}
         >
-          <Link
-            href="/dashboard"
-            aria-label="Back to inbox"
-            style={{
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              fontSize: "1.1rem",
-              lineHeight: 1,
-              padding: "0.25rem",
-            }}
-          >
-            ←
-          </Link>
           <div
             aria-hidden
             style={{
@@ -142,6 +133,6 @@ export default async function ConversationThreadPage({
         </div>
       </div>
       <ContactPanel conversation={conversationDTO} />
-    </main>
+    </div>
   );
 }

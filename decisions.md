@@ -564,3 +564,109 @@ unfinished/prototype layout, not a product. No IA change (still separate
 page-per-route navigation, not a persistent split-pane shell) — that
 would be a bigger restructure than a visual-polish pass calls for; the
 maintainer's own stated plan is to keep improving this incrementally.
+**Superseded same day** by the split-pane redesign below — the maintainer's
+next message provided a concrete reference screenshot that specifically
+called for the persistent shell this entry had deliberately deferred.
+
+## Light-theme, persistent split-pane redesign (2026-08-26, second pass)
+
+Same day as the dark-theme pass above, the maintainer sent a screenshot of
+the real WhatsApp Business Web app and said "make it look like this — the
+current one is just plain and boring." That screenshot is light-themed
+(not dark) and uses a persistent shell — a left icon rail, an
+always-visible conversation list, and a right-hand pane that's either an
+empty state or the open thread — not page-per-route navigation. This
+supersedes the theme choice from the AskUserQuestion earlier in the day
+(dark was chosen when dark vs. light was the actual question on the
+table; the maintainer's own concrete reference is a stronger signal than
+that earlier abstract preference) and extends the scope decision (still
+"whole dashboard," now including the layout shell itself).
+
+### Light theme, WhatsApp's own real teal accent
+**Decision:** rewrote every token in `globals.css` from the dark palette
+to a light one (`--bg: #f0f2f5`, `--surface: #fff`, `--text-primary:
+#111b21`, etc.) and changed `--accent` from the dark pass's teal-green
+(`#22b57a`) to WhatsApp's own real teal (`#00a884`), reusing it directly
+for `--unread` too instead of keeping unread as a separate warm orange.
+**Why:** the maintainer's reference is visually explicit — white/light-grey
+surfaces, near-black text, and the badges in the screenshot ("13", "1",
+"Unread 14") are the same green as WhatsApp's own send button and active
+states, not a distinct "attention" color. Because every component already
+routes its colors through these tokens (the point of the token system
+built in the first pass), this was a `globals.css`-only edit — no
+component file needed its own color values touched.
+
+### A real persistent split-pane shell, via nested route groups, not client-side layout state
+**Decision:** three new layout files, no new client-side routing state:
+- `dashboard/layout.tsx` (new, outermost, wraps all of `dashboard/*`
+  including `admin/*`) renders the left icon rail (`NavRail`) and a flex
+  row for `{children}`.
+- `dashboard/(inbox)/layout.tsx` (new route group) renders the
+  conversation-list sidebar — the data-fetching that used to live in
+  `dashboard/page.tsx` moved here — plus `{children}` as the main pane.
+- `dashboard/(inbox)/page.tsx` (moved from `dashboard/page.tsx`) is now
+  just the empty-state illustration; `dashboard/(inbox)/conversations/[id]/page.tsx`
+  (moved from `dashboard/conversations/[id]/page.tsx`) is now just the
+  thread header + `ThreadView` + `ContactPanel`, no outer wrapper or back
+  arrow (nothing to navigate back to — the list never leaves the screen).
+`dashboard/admin/*` deliberately sits outside the `(inbox)` group, so
+admin pages get the icon rail but not a conversation-list sidebar next to
+a settings form.
+**Why routing, not state:** a route-group layout gets the conversation
+list re-rendered by React Server Components on navigation, same as any
+other Next.js layout — no custom client-side "which pane is open" state
+to keep in sync with the URL, no risk of the URL and the visible pane
+disagreeing after a back/forward navigation or a shared link. This is
+the idiomatic App Router way to build a persistent-shell-plus-detail-pane
+UI, not a workaround.
+**Considered and rejected:** a single client component owning both panes
+and fetching the thread via `fetch()` on click (loses server-rendered
+first paint for the thread, loses shareable/bookmarkable thread URLs,
+and duplicates data-loading logic the page components already have).
+
+### The nav rail lists only Chowk's real destinations, not the reference's fabricated ones
+**Decision:** `NavRail` (new component) shows exactly two destinations —
+Inbox (with an unread-count badge) and, for ADMIN users only, Admin
+Settings — plus logout. The reference screenshot's Calls/Status/
+Communities/Store/Broadcast icons were not recreated.
+**Why:** those icons are real WhatsApp consumer-app features Chowk has
+never built and has no near-term plan to build; a rail icon that goes
+nowhere (or worse, silently does nothing) is a worse experience than a
+shorter rail. Matching the reference's *layout pattern* (a narrow icon
+rail, badge treatment, active-state highlighting) was the actual ask;
+recreating icons for features that don't exist would be decoration that
+misleads, not a redesign.
+**New data-layer function:** `sumUnreadCount(organizationId)` in
+`src/data/conversations.ts` (a plain `aggregate` over OPEN conversations'
+`unreadCount`) backs the rail's inbox badge — no prior helper computed an
+org-wide total, only per-conversation counts.
+
+### WhatsApp-style status ticks on the conversation list's own preview line
+**Decision:** added `lastMessageStatus` to `ConversationListItemDTO` (both
+`GET /api/conversations` and the `(inbox)/layout.tsx` server-rendered
+first page, sourced from the same `messages[0]` row already selected for
+the preview) and a `statusTick()` helper in `conversation-list.tsx`: a
+single check for PENDING/SENT, a double check (colored accent) for
+DELIVERED/READ, an exclamation for FAILED — shown before "You:" on an
+OUTBOUND preview, matching the reference screenshot exactly.
+**Why:** the reference shows this explicitly, and the data was already
+one field away — `Message.status` was already being selected for other
+purposes on the same query, just not passed through the DTO.
+
+### Verification
+tsc --noEmit clean; eslint 0 errors/0 warnings; `vitest run` 123/123;
+`vitest run --config vitest.integration.config.ts` 65/65; `next build`
+succeeds with the expected route table (`/dashboard`,
+`/dashboard/conversations/[id]`, `/dashboard/admin`,
+`/dashboard/admin/channels` — no duplicate-route conflict from the file
+moves). Also verified against the real running dev server: logged in
+through a real authenticated session (Next.js server actions require a
+multipart POST carrying the rendered form's `$ACTION_ID_...` hidden
+field — a plain urlencoded POST silently no-ops instead of erroring,
+which is easy to mistake for success) and fetched the empty-state
+dashboard, a real conversation thread, and both admin pages — confirmed
+the sidebar renders on the first two and is correctly absent on the admin
+pages, and confirmed real markers (`<nav>`, the search placeholder, the
+empty-state heading) rather than trusting an `-match "Error"` check alone
+(that string false-positives on Next's own bundled error-boundary module
+path present in every page's RSC payload — learned this by checking).

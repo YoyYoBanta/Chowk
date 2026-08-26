@@ -342,6 +342,28 @@ is currently mid-change — M1–M9 are all now checklist-complete against
 implementation-plan.md; M10 (Phase B) remains the next real milestone
 whenever the human is ready.
 
+**As of 2026-08-26 (second redesign pass):** the maintainer asked for a
+light-theme, WhatsApp-Business-Web-style layout (a real reference
+screenshot), superseding the dark-theme redesign from earlier the same day.
+No new backend flow — this is a routing/rendering restructure only:
+- `dashboard/(inbox)/layout.tsx` (new) now does the conversation-list
+  fetch that used to live in `dashboard/page.tsx` — same
+  `listConversationsPage` call as Flow 3's read path, just relocated one
+  level up so the list renders as a persistent sidebar next to whichever
+  page is nested under it (`(inbox)/page.tsx`, the empty state, or
+  `(inbox)/conversations/[id]/page.tsx`, the thread).
+- `dashboard/layout.tsx` (new, wraps `dashboard/*` including `admin/*`)
+  calls the new `src/data/conversations.ts` `sumUnreadCount(organizationId)`
+  (a plain `aggregate` over OPEN conversations) to badge the nav rail's
+  inbox icon — a new, tiny read path, not wired into any existing flow.
+- Admin pages (`dashboard/admin/*`) sit outside the `(inbox)` route group
+  on purpose, so they get the nav rail but not the conversation-list
+  sidebar (a settings screen doesn't need a chat list next to it).
+Nothing is currently mid-change — verified via tsc/eslint/vitest (123/123)/
+integration (65/65)/`next build`, plus real authenticated HTTP fetches of
+the empty-state dashboard, a real thread, and both admin pages (see
+`decisions.md`).
+
 **As of 2026-08-21 (historical):** just finished adding Flow 9 (channel pairing) —
 `src/worker/index.ts`'s `connectActiveChannels()`, `scripts/activate-channel.ts`,
 and the QR-printing addition to `src/providers/baileys/adapter.ts`'s

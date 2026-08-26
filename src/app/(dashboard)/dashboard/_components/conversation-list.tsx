@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState, useEffect } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useRealtimeEvents } from "../../_lib/use-realtime-events";
 import { formatRelativeTime } from "@/lib/format/relative-time";
 import { messageTypeIcon } from "@/lib/messages/render";
@@ -23,6 +24,10 @@ export function ConversationList({
   initialConversations: ConversationListItemDTO[];
   initialNextCursor: string | null;
 }) {
+  const pathname = usePathname();
+  const activeConversationId = pathname?.startsWith("/dashboard/conversations/")
+    ? pathname.slice("/dashboard/conversations/".length)
+    : null;
   const [conversations, setConversations] = useState(initialConversations);
   const [nextCursor, setNextCursor] = useState(initialNextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -137,8 +142,11 @@ export function ConversationList({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--bg)", color: "var(--text-primary)" }}>
 
-      {/* Search */}
-      <div style={{ padding: "var(--space-4) var(--space-4) var(--space-3)" }}>
+      {/* Header + search */}
+      <div style={{ padding: "var(--space-4) var(--space-4) 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h1 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>Chowk</h1>
+      </div>
+      <div style={{ padding: "var(--space-3) var(--space-4)" }}>
         <div style={{ position: "relative" }}>
           <span
             aria-hidden
@@ -148,7 +156,7 @@ export function ConversationList({
               top: "50%",
               transform: "translateY(-50%)",
               color: "var(--text-muted)",
-              fontSize: "0.9rem",
+              fontSize: "0.85rem",
               pointerEvents: "none",
             }}
           >
@@ -161,12 +169,12 @@ export function ConversationList({
             onChange={(e) => setSearch(e.target.value)}
             style={{
               width: "100%",
-              padding: "0.6rem 0.75rem 0.6rem 2.1rem",
-              borderRadius: "var(--radius-md)",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
+              padding: "0.55rem 0.75rem 0.55rem 2.2rem",
+              borderRadius: "var(--radius-full)",
+              border: "none",
+              background: "var(--surface-raised)",
               color: "var(--text-primary)",
-              fontSize: "0.88rem",
+              fontSize: "0.85rem",
               outline: "none",
             }}
           />
@@ -240,6 +248,7 @@ export function ConversationList({
             {conversations.map((conversation) => {
               const name = conversation.contact.displayName ?? conversation.contact.name ?? conversation.contact.waId;
               const icon = conversation.lastMessageType ? messageTypeIcon(conversation.lastMessageType) : null;
+              const isActive = conversation.id === activeConversationId;
               return (
                 <li key={conversation.id}>
                   <Link
@@ -252,9 +261,14 @@ export function ConversationList({
                       textDecoration: "none",
                       color: "inherit",
                       borderBottom: "1px solid var(--border)",
+                      background: isActive ? "var(--surface-active)" : "transparent",
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    onMouseEnter={(e) => {
+                      if (!isActive) e.currentTarget.style.background = "var(--surface-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isActive ? "var(--surface-active)" : "transparent";
+                    }}
                   >
                     <div
                       aria-hidden
@@ -305,7 +319,18 @@ export function ConversationList({
                           marginTop: "2px",
                         }}
                       >
-                        {conversation.lastMessageDirection === "OUTBOUND" ? "You: " : ""}
+                        {conversation.lastMessageDirection === "OUTBOUND" && (
+                          <span
+                            style={{
+                              color:
+                                conversation.lastMessageStatus === "READ"
+                                  ? "var(--accent)"
+                                  : "var(--text-muted)",
+                            }}
+                          >
+                            {statusTick(conversation.lastMessageStatus)} You:{" "}
+                          </span>
+                        )}
                         {icon ? `${icon} ` : ""}
                         {conversation.lastMessagePreview ?? "No messages yet"}
                       </div>
@@ -365,6 +390,22 @@ export function ConversationList({
       </div>
     </div>
   );
+}
+
+/** WhatsApp-style tick for an OUTBOUND preview: a single check while still
+ * in flight (PENDING/SENT), a double check once the provider has confirmed
+ * delivery or read, and a plain exclamation on FAILED — mirrors the same
+ * status set MessageBubble's own STATUS_LABELS covers in the thread. */
+function statusTick(status: string | null): string {
+  switch (status) {
+    case "READ":
+    case "DELIVERED":
+      return "✓✓";
+    case "FAILED":
+      return "!";
+    default:
+      return "✓";
+  }
 }
 
 const selectFilterStyle = {

@@ -28,7 +28,7 @@ export default function AdminChannelsPage() {
   }, []);
 
   return (
-    <div style={{ padding: "var(--space-6)", background: "var(--bg)", minHeight: "100vh", color: "var(--text-primary)" }}>
+    <div style={{ padding: "var(--space-6)", background: "var(--bg)", height: "100%", overflowY: "auto", color: "var(--text-primary)" }}>
       <div style={{ marginBottom: "var(--space-5)" }}>
         <Link href="/dashboard/admin" style={{ color: "var(--accent)", textDecoration: "none", fontSize: "0.85rem" }}>
           ← Back to Admin Settings

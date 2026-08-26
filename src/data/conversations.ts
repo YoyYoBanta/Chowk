@@ -42,6 +42,17 @@ export async function upsertConversationForInbound(
   });
 }
 
+/** Sum of unreadCount across every OPEN conversation in the org — backs the
+ * nav rail's inbox badge. Deliberately OPEN-only: a DONE conversation isn't
+ * something the badge should nag the agent about. */
+export async function sumUnreadCount(organizationId: string): Promise<number> {
+  const result = await prisma.conversation.aggregate({
+    where: { organizationId, status: "OPEN" },
+    _sum: { unreadCount: true },
+  });
+  return result._sum.unreadCount ?? 0;
+}
+
 export async function getConversationById(
   organizationId: string,
   conversationId: string,
@@ -87,7 +98,7 @@ export type ConversationListItem = Conversation & {
   channel: Pick<Channel, "id" | "displayName" | "provider">;
   // Only the single latest message, for the list row's preview — never the
   // full thread (that's listMessagesPage, used by the thread view).
-  messages: Pick<Message, "id" | "type" | "body" | "direction" | "metaTimestamp">[];
+  messages: Pick<Message, "id" | "type" | "body" | "direction" | "metaTimestamp" | "status">[];
 };
 
 export type ConversationWithContact = Conversation & {
@@ -188,7 +199,7 @@ export async function listConversationsPage(
       messages: {
         orderBy: { metaTimestamp: "desc" },
         take: 1,
-        select: { id: true, type: true, body: true, direction: true, metaTimestamp: true },
+        select: { id: true, type: true, body: true, direction: true, metaTimestamp: true, status: true },
       },
     },
   });
