@@ -13,6 +13,15 @@
 #   npx prisma migrate deploy  # apply prisma/migrations/ to postgres
 #   npm run seed                # seed the M1 demo orgs/users
 #
+# One more one-time step, same spirit as the MinIO bucket below: create the
+# dedicated integration-test database (M9 — vitest.integration.config.ts
+# rewrites DATABASE_URL to "<db>_test" precisely so the test suite's
+# destructive Postgres writes can never land in this same database a
+# developer is looking at in their browser — a leftover test fixture from a
+# failed cleanup once did exactly that):
+#   docker compose exec postgres createdb -U user chowk_test
+#   DATABASE_URL=postgresql://user:password@localhost:5432/chowk_test npx prisma migrate deploy
+#
 # Not exercised by CI or by any test in this repo yet — every prior
 # milestone's verification ran against standalone Postgres/Redis binaries
 # instead, in a separate cloud agent environment with no Docker reachable

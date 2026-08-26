@@ -446,3 +446,32 @@ this required no change to the function under test itself.
 standing prerequisite for running the integration suite — fragile (easy
 to forget, disrupts real local development) and unnecessary once the
 actual root cause (shared queue name) was identified and fixed properly.
+
+---
+
+## Integration tests now run against a dedicated `_test` database (2026-08-26)
+
+### `vitest.integration.config.ts` rewrites `DATABASE_URL` to a `_test`-suffixed database, unconditionally
+**Decision:** the integration test config now appends `_test` to whatever
+database name `.env`'s `DATABASE_URL` points at, before any test file is
+loaded — `chowk` (local dev) becomes `chowk_test`.
+**Why:** this was a real, user-visible bug, not a hypothetical. Every
+integration test's `afterAll` cleanup is best-effort — an interrupted run
+(a crashed process, a background test runner killed mid-suite) can leave
+fixture data behind — and until this fix, `DATABASE_URL` was whatever
+`.env` pointed at: the exact same database `npm run dev`/`npm run worker`
+use. A leftover fixture from `messages.search.integration.test.ts`'s
+10,000+-row load test (an interrupted `beforeAll`, from before its
+timeout was fixed) showed up as a garbled contact name in the actual
+local inbox the maintainer was looking at, sitting alongside their real
+paired-WhatsApp-account contacts. Verified the fix is real, not assumed:
+polled `pg_stat_activity` during a live test run and confirmed every
+query hit `chowk_test`, none hit `chowk`.
+**Considered and rejected:** relying on `afterAll` cleanup alone
+(already the status quo, and already demonstrably insufficient — that's
+what caused the leak). Requiring developers to remember to point
+`DATABASE_URL` at a different database only when running tests (fragile,
+opt-in, the same category of problem as the private-queue fix above).
+**Follow-up captured in `docker-compose.yml`'s own setup comment**: a
+fresh environment needs `chowk_test` created and migrated once, the same
+one-time-setup category as MinIO's bucket creation.
