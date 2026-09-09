@@ -19,6 +19,23 @@ const envSchema = z.object({
   META_VERIFY_TOKEN: z.string().optional(),
   META_ACCESS_TOKEN: z.string().optional(),
 
+  // Graph API version used for every Cloud API call
+  // (src/providers/cloud-api/adapter.ts). Configurable because Meta retires
+  // each version two years after its successor ships, so which version we
+  // talk to is a deploy-time decision with an expiry date, not something
+  // worth a code change and a release. Defaulted so a Phase A install (the
+  // only kind that exists today) needs no new env var.
+  //
+  // Shape-validated, not membership-validated: a `vNN.N` regex catches the
+  // realistic typo (a bare "26.0", a stray "/v26.0") while still allowing a
+  // version newer than whatever this code knows about. Meta is the authority
+  // on which versions are live, and an allowlist here would go stale and
+  // start rejecting valid values.
+  META_GRAPH_API_VERSION: z
+    .string()
+    .regex(/^v\d+\.\d+$/, 'META_GRAPH_API_VERSION must look like "v26.0"')
+    .default("v26.0"),
+
   OBJECT_STORAGE_ENDPOINT: z.string().url(),
   OBJECT_STORAGE_BUCKET: z.string().min(1),
   OBJECT_STORAGE_ACCESS_KEY: z.string().min(1),

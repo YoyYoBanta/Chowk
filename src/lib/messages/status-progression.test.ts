@@ -10,11 +10,11 @@ import { isForwardStatusTransition, statusRank, statusesBelow } from "./status-p
  * that this function is actually wired into the consumer correctly.
  */
 describe("statusRank", () => {
-  it("orders PENDING < SENT < DELIVERED < READ < FAILED", () => {
+  it("orders PENDING < SENT < FAILED < DELIVERED < READ", () => {
     expect(statusRank("PENDING")).toBeLessThan(statusRank("SENT"));
-    expect(statusRank("SENT")).toBeLessThan(statusRank("DELIVERED"));
+    expect(statusRank("SENT")).toBeLessThan(statusRank("FAILED"));
+    expect(statusRank("FAILED")).toBeLessThan(statusRank("DELIVERED"));
     expect(statusRank("DELIVERED")).toBeLessThan(statusRank("READ"));
-    expect(statusRank("READ")).toBeLessThan(statusRank("FAILED"));
   });
 });
 
@@ -37,16 +37,43 @@ describe("isForwardStatusTransition", () => {
     expect(isForwardStatusTransition("READ", "READ")).toBe(false);
   });
 
-  it("allows FAILED from any non-terminal state, including after SENT or READ", () => {
+  it("allows FAILED from PENDING or SENT — a send that never got further", () => {
     expect(isForwardStatusTransition("PENDING", "FAILED")).toBe(true);
     expect(isForwardStatusTransition("SENT", "FAILED")).toBe(true);
-    expect(isForwardStatusTransition("DELIVERED", "FAILED")).toBe(true);
-    expect(isForwardStatusTransition("READ", "FAILED")).toBe(true);
   });
 
-  it("treats FAILED as terminal — nothing moves past it, including another FAILED", () => {
+  /**
+   * The 2026-09-09 rule change. Meta emits BOTH `delivered` and `failed` for
+   * one message when the recipient is on several devices and delivery
+   * succeeds on one but not another. Delivery is a positive fact: a later
+   * failure on some other device must not retract it, or the agent sees a
+   * message the recipient definitely received reported as failed.
+   */
+  it("ignores a FAILED arriving after DELIVERED or READ — delivery is not retracted", () => {
+    expect(isForwardStatusTransition("DELIVERED", "FAILED")).toBe(false);
+    expect(isForwardStatusTransition("READ", "FAILED")).toBe(false);
+  });
+
+  it("lets DELIVERED/READ upgrade a FAILED — the same multi-device race, webhooks reversed", () => {
+    // Meta does not guarantee webhook ordering, so the failed-then-delivered
+    // ordering must converge on the same final state as delivered-then-failed.
+    expect(isForwardStatusTransition("FAILED", "DELIVERED")).toBe(true);
+    expect(isForwardStatusTransition("FAILED", "READ")).toBe(true);
+  });
+
+  it("both multi-device webhook orderings converge on DELIVERED", () => {
+    const apply = (current: "PENDING" | "SENT" | "DELIVERED" | "READ" | "FAILED", next: typeof current) =>
+      isForwardStatusTransition(current, next) ? next : current;
+
+    // delivered then failed
+    expect(apply(apply("SENT", "DELIVERED"), "FAILED")).toBe("DELIVERED");
+    // failed then delivered
+    expect(apply(apply("SENT", "FAILED"), "DELIVERED")).toBe("DELIVERED");
+  });
+
+  it("still refuses to let a stale or replayed SENT overwrite a real FAILED", () => {
     expect(isForwardStatusTransition("FAILED", "SENT")).toBe(false);
-    expect(isForwardStatusTransition("FAILED", "READ")).toBe(false);
+    expect(isForwardStatusTransition("FAILED", "PENDING")).toBe(false);
     expect(isForwardStatusTransition("FAILED", "FAILED")).toBe(false);
   });
 });
@@ -54,9 +81,12 @@ describe("isForwardStatusTransition", () => {
 describe("statusesBelow", () => {
   it("returns every status ranked below the target", () => {
     expect(statusesBelow("SENT")).toEqual(["PENDING"]);
-    expect(new Set(statusesBelow("DELIVERED"))).toEqual(new Set(["PENDING", "SENT"]));
-    expect(new Set(statusesBelow("FAILED"))).toEqual(
-      new Set(["PENDING", "SENT", "DELIVERED", "READ"]),
+    // FAILED is now reachable only from PENDING/SENT, so it is these two that
+    // the atomic `WHERE status IN (...)` update is allowed to overwrite.
+    expect(new Set(statusesBelow("FAILED"))).toEqual(new Set(["PENDING", "SENT"]));
+    expect(new Set(statusesBelow("DELIVERED"))).toEqual(new Set(["PENDING", "SENT", "FAILED"]));
+    expect(new Set(statusesBelow("READ"))).toEqual(
+      new Set(["PENDING", "SENT", "FAILED", "DELIVERED"]),
     );
   });
 

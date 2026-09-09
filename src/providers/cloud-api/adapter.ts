@@ -16,8 +16,19 @@ import type {
   WhatsAppProvider,
 } from "../types";
 
-const GRAPH_API_VERSION = "v20.0";
-const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
+/**
+ * Graph API version, read from `META_GRAPH_API_VERSION` (validated in
+ * src/config/env.ts) rather than hardcoded, so moving between versions is a
+ * deploy-time decision and not a code change + release.
+ *
+ * Meta retires a version two years after its successor ships, so this value
+ * has an expiry date by design and WILL need changing on a schedule no
+ * release cadence should be coupled to. Bumping it is never purely
+ * mechanical: read the changelog for every version being skipped
+ * (https://developers.facebook.com/docs/graph-api/changelog) before moving,
+ * since breaking changes land between versions.
+ */
+const GRAPH_API_BASE = `https://graph.facebook.com/${env.META_GRAPH_API_VERSION}`;
 
 /**
  * `ProviderTemplate.status` (context.md §8.0.1) is a narrow 3-value union,
@@ -231,12 +242,23 @@ class CloudApiProvider implements WhatsAppProvider {
 
     const token = this.getAccessToken(channel);
 
-    // 1. Fetch URL from Media ID
+    // 1. Fetch URL from Media ID.
+    //
+    // The URL this returns EXPIRES ~5 MINUTES after it is issued (confirmed
+    // against Meta's media reference, 2026-09-09 -- see TODO-VERIFY.md), so
+    // it must never be cached, persisted on the Message/Media row, passed
+    // between queue jobs, or handed to a client. Always re-resolve it from
+    // the media id immediately before fetching the bytes, as the two steps
+    // below do. The extra round-trip is load-bearing, not redundant: an
+    // "optimization" that stores this URL would work in every test and then
+    // start 403ing in production for anything that retried more than five
+    // minutes later.
     const metaMediaId = ref.id;
     const info = await this.callMetaAPI(`/${metaMediaId}`, "GET", token) as { url?: string };
     if (!info.url) throw new Error("No URL returned for media ID");
 
-    // 2. Fetch binary data
+    // 2. Fetch binary data. Meta requires the bearer token on this request
+    // too -- the signed URL alone is not sufficient.
     const res = await fetch(info.url, {
       headers: { "Authorization": `Bearer ${token}` }
     });
@@ -250,9 +272,15 @@ class CloudApiProvider implements WhatsAppProvider {
     const channel = this.channels.get(channelId);
     if (!channel?.metaPhoneNumberId) throw new Error("Channel missing meta phone ID.");
 
-    // Cloud API requires multipart/form-data for media upload
+    // Cloud API requires multipart/form-data for media upload, with THREE
+    // required parts: messaging_product, file, and type. `type` was missing
+    // until 2026-09-09, which would have failed every outbound media upload
+    // the first time this provider was ever used for real -- no test caught
+    // it because M6's object-storage tests mock the provider entirely.
+    // Confirmed against the live media reference; see TODO-VERIFY.md.
     const formData = new FormData();
     formData.append("messaging_product", "whatsapp");
+    formData.append("type", mime);
     // `Buffer`'s `.buffer` is typed `ArrayBufferLike` (could be a
     // SharedArrayBuffer), which `BlobPart` doesn't accept — `Uint8Array.from`
     // copies into a plain, real `ArrayBuffer`-backed view instead.

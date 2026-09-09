@@ -13,24 +13,60 @@ import type { MessageStatus } from "@prisma/client";
  * Vitest suite with no DB — same reasoning as src/providers/baileys/normalize.ts
  * being split out from adapter.ts.
  *
- * FAILED is deliberately ranked ABOVE every other status, not handled as a
- * special-cased "terminal" branch — this is what makes it a valid forward
- * target from ANY non-FAILED state (PENDING, SENT, DELIVERED, or even
- * READ), matching context.md §7.4 ("Status only ever moves forward:
- * PENDING -> SENT -> DELIVERED -> READ, or into FAILED") and this
- * milestone's own test brief: "a FAILED after SENT applies (still forward,
- * since FAILED is terminal from any non-terminal state)". Ranking it
- * highest also makes FAILED terminal for free — once a message is FAILED,
- * no other status outranks it, so nothing can ever move past it again; no
- * separate `current === "FAILED"` special case is needed anywhere that
- * calls isForwardStatusTransition/statusesBelow.
+ * ## Where FAILED sits, and why it moved (2026-09-09)
+ *
+ * FAILED ranks between SENT and DELIVERED. The rank is "how far the message
+ * actually got", and FAILED means "got no further than sent" — so it is a
+ * valid forward target from PENDING and SENT, but **not** from DELIVERED or
+ * READ.
+ *
+ * It previously ranked above everything (PENDING < SENT < DELIVERED < READ <
+ * FAILED), which made FAILED reachable from any state and terminal for free.
+ * That was written for Baileys, where a failure is something our own send
+ * path observes once, and it was correct there.
+ *
+ * It is wrong for Meta. The Cloud API can emit BOTH `delivered` and `failed`
+ * webhooks for a single message when the recipient is logged in on several
+ * devices and delivery succeeds on one but not another (confirmed against
+ * Meta's status webhook reference, 2026-09-09 — see TODO-VERIFY.md). Under
+ * the old ranking a late `failed` outranked the `delivered` that preceded it,
+ * so a message the recipient had genuinely received would be shown to the
+ * agent as failed — and, because FAILED was terminal, permanently so.
+ *
+ * The rule this encodes now: **delivery is a positive fact and is not
+ * retracted by a later failure on some other device.** Once we have evidence
+ * the message reached the recipient, that evidence wins.
+ *
+ * Three consequences worth being explicit about, since this is a deliberate
+ * departure from the old behaviour rather than an oversight:
+ *
+ * 1. FAILED is no longer terminal. DELIVERED and READ both outrank it, so a
+ *    `delivered` arriving after a `failed` (the same multi-device race, in
+ *    the other webhook order — Meta does not guarantee ordering) correctly
+ *    upgrades the message. This is the intended behaviour, not a regression:
+ *    both orderings now converge on DELIVERED, which is what actually
+ *    happened.
+ * 2. A genuine terminal failure is unaffected. A message that never left
+ *    PENDING or SENT still moves to FAILED, and nothing subsequently arrives
+ *    to move it off — there is no delivery receipt for a message that was
+ *    never delivered. The paths that write FAILED directly
+ *    (send-message.consumer.ts's terminal/exhausted branches,
+ *    reconcile-stuck.ts) all act on PENDING rows, so all of them remain
+ *    forward moves.
+ * 3. SENT still cannot overwrite FAILED (rank 1 < 2), so a duplicate or
+ *    replayed `sent` webhook after a real failure is still ignored.
+ *
+ * This narrows context.md §7.4's "or into FAILED" to "or into FAILED, from
+ * PENDING/SENT only". §7.4 predates Phase B and was written against Baileys'
+ * semantics; the multi-device case it does not cover is the reason for the
+ * change.
  */
 const STATUS_RANK: Record<MessageStatus, number> = {
   PENDING: 0,
   SENT: 1,
-  DELIVERED: 2,
-  READ: 3,
-  FAILED: 4,
+  FAILED: 2,
+  DELIVERED: 3,
+  READ: 4,
 };
 
 export function statusRank(status: MessageStatus): number {

@@ -115,7 +115,7 @@ describe("processStatusUpdateJob (real Postgres, no mocking)", () => {
     expect(row?.status).toBe("READ");
   });
 
-  it("applies a FAILED arriving after SENT — FAILED is terminal from any non-terminal state", async () => {
+  it("applies a FAILED arriving after SENT — a send that never got further", async () => {
     const { org, conversation } = await makeFixture("FailedAfterSent");
     const providerMessageId = `pmid-failed-${suffix}`;
     await makeSentMessage(org.id, conversation.id, providerMessageId); // status: SENT
@@ -134,12 +134,59 @@ describe("processStatusUpdateJob (real Postgres, no mocking)", () => {
     expect(row?.errorCode).toBe("SOME_LATE_FAILURE");
     expect(row?.errorMessage).toBe("Delivery failed after initial send.");
 
-    // And FAILED itself is terminal: nothing moves past it afterward.
-    await processStatusUpdateJob(makeJob(org.id, { providerMessageId, status: "READ" }));
+    // A stale/replayed SENT still cannot overwrite a real failure.
+    await processStatusUpdateJob(makeJob(org.id, { providerMessageId, status: "SENT" }));
     const stillFailed = await prisma.message.findFirst({
       where: { organizationId: org.id, providerMessageId },
     });
     expect(stillFailed?.status).toBe("FAILED");
+  });
+
+  /**
+   * 2026-09-09 rule change (src/lib/messages/status-progression.ts): Meta
+   * emits BOTH `delivered` and `failed` for one message when the recipient is
+   * logged in on multiple devices and delivery succeeds on one but not
+   * another. Delivery must not be retracted by that later failure, and since
+   * Meta does not guarantee webhook ordering, both orderings have to converge
+   * on DELIVERED. Proven here against real Postgres, through the same atomic
+   * conditional UPDATE the consumer uses in production.
+   */
+  it("does not let a multi-device FAILED retract a DELIVERED, in either webhook order", async () => {
+    const { org, conversation } = await makeFixture("MultiDevice");
+
+    // Ordering A: delivered, then the late failed.
+    const pmidA = `pmid-md-a-${suffix}`;
+    await makeSentMessage(org.id, conversation.id, pmidA);
+    await processStatusUpdateJob(makeJob(org.id, { providerMessageId: pmidA, status: "DELIVERED" }));
+    await processStatusUpdateJob(
+      makeJob(org.id, {
+        providerMessageId: pmidA,
+        status: "FAILED",
+        errorCode: "131026",
+        errorMessage: "Failed on a second device.",
+      }),
+    );
+    const rowA = await prisma.message.findFirst({
+      where: { organizationId: org.id, providerMessageId: pmidA },
+    });
+    expect(rowA?.status).toBe("DELIVERED");
+
+    // Ordering B: failed first, then the delivered that outranks it.
+    const pmidB = `pmid-md-b-${suffix}`;
+    await makeSentMessage(org.id, conversation.id, pmidB);
+    await processStatusUpdateJob(
+      makeJob(org.id, {
+        providerMessageId: pmidB,
+        status: "FAILED",
+        errorCode: "131026",
+        errorMessage: "Failed on a second device.",
+      }),
+    );
+    await processStatusUpdateJob(makeJob(org.id, { providerMessageId: pmidB, status: "DELIVERED" }));
+    const rowB = await prisma.message.findFirst({
+      where: { organizationId: org.id, providerMessageId: pmidB },
+    });
+    expect(rowB?.status).toBe("DELIVERED");
   });
 
   it("logs and drops a status update for a providerMessageId that doesn't exist yet — never throws", async () => {
