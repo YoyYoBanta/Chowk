@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$infraDir = "c:\Users\Msi\.gemini\antigravity-ide\scratch\Chowk\.infra"
+$infraDir = Join-Path $PSScriptRoot ".infra"
 $env:Path = "$infraDir\node-v26.7.0-win-x64;" + $env:Path
 
 Write-Host "Activating channel..."

@@ -4,7 +4,7 @@ $redisUrl = "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Re
 $minioUrl = "https://dl.min.io/server/minio/release/windows-amd64/minio.exe"
 $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-16.4-1-windows-x64-binaries.zip"
 
-$infraDir = "c:\Users\Msi\.gemini\antigravity-ide\scratch\Chowk\.infra"
+$infraDir = Join-Path $PSScriptRoot ".infra"
 New-Item -ItemType Directory -Force -Path $infraDir | Out-Null
 
 Write-Host "Downloading Redis..."

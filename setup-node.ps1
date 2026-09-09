@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $nodeUrl = "https://nodejs.org/dist/v26.7.0/node-v26.7.0-win-x64.zip"
-$infraDir = "c:\Users\Msi\.gemini\antigravity-ide\scratch\Chowk\.infra"
+$infraDir = Join-Path $PSScriptRoot ".infra"
 
 Write-Host "Downloading Node.js..."
 Invoke-WebRequest -Uri $nodeUrl -OutFile "$infraDir\node.zip"
