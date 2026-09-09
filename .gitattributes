@@ -1,0 +1,74 @@
+# Settle line endings once, here, instead of per-copy.
+#
+# Every text file is stored LF in the repository. What lands in a working
+# tree is then decided by the checkout (core.autocrlf), so a Windows
+# developer can still have CRLF locally without that ever reaching a commit.
+#
+# Why this file exists: the stored blobs were already LF (every commit so far
+# was made with core.autocrlf=true, which normalises on the way in), but
+# nothing in the repository said so. That left the convention dependent on
+# each developer's local git config: a clone with core.autocrlf=false, or an
+# editor writing LF into a CRLF working tree, silently produces a diff where
+# every line of every touched file appears changed. That happened during the
+# 2026-09-09 session and briefly hid ~17 real changes behind ~200 files of
+# whitespace noise.
+#
+# `git add --renormalize .` was run when this file was added and staged
+# nothing, confirming the existing blobs already match the rule below. This
+# file changes no content; it makes the existing convention explicit and
+# enforced regardless of local config.
+
+* text=auto
+
+# Source and config: text, normalised. Listed explicitly so intent is
+# obvious even though `* text=auto` would already infer it.
+*.ts      text
+*.tsx     text
+*.mjs     text
+*.cjs     text
+*.js      text
+*.jsx     text
+*.json    text
+*.css     text
+*.md      text
+*.sql     text
+*.prisma  text
+*.yml     text
+*.yaml    text
+*.toml    text
+*.txt     text
+
+# PowerShell: keep CRLF in the working tree. Windows PowerShell 5.1 is the
+# interpreter here and CRLF is its native convention; see start-infra.ps1's
+# own header for the related encoding trap (a UTF-8 file with no BOM is read
+# as Windows-1252, turning an em-dash into a string-delimiting curly quote).
+*.ps1     text eol=crlf
+*.psm1    text eol=crlf
+*.psd1    text eol=crlf
+
+# Shell scripts must keep LF even when checked out on Windows, or they fail
+# to run under sh/bash (a trailing CR becomes part of the shebang).
+*.sh      text eol=lf
+
+# No binary assets are tracked today; these are here so the first one added
+# is not silently corrupted by line-ending translation.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.avif    binary
+*.svg     text
+*.ico     binary
+*.pdf     binary
+*.zip     binary
+*.gz      binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.eot     binary
+*.mp3     binary
+*.mp4     binary
+*.ogg     binary
+*.webm    binary
