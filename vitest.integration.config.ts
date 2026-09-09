@@ -44,6 +44,28 @@ if (process.env.DATABASE_URL) {
   }
   process.env.DATABASE_URL = url.toString();
 }
+
+// The Redis half of the same isolation, added while moving Redis/MinIO to
+// managed services. Postgres has had a dedicated `_test` database since M9;
+// Redis had no equivalent, so this suite and `npm run dev` shared queue keys
+// and pub/sub channels outright.
+//
+// Locally that was survivable by luck - a dev worker is usually not running
+// during a test run. On a shared or managed Redis it is not, and the failure
+// mode is nasty precisely because it is silent: whichever worker blocks on
+// the queue first wins the job, so a test can consume a real dev job (or the
+// reverse) and the loser simply never sees it. That reads as a queue bug
+// rather than a configuration collision, which is an expensive thing to
+// debug.
+//
+// A `_test`-suffixed key prefix rather than a separate Redis database number,
+// deliberately: ioredis does parse a db from the URL path
+// (`redis://h:6379/1` -> db 1), but several managed providers expose only
+// db 0, so that approach would isolate correctly on a laptop and quietly stop
+// isolating anything once pointed at the cloud. A key prefix works on every
+// provider. src/queue/connection.ts's REDIS_KEY_PREFIX reads this.
+process.env.REDIS_KEY_PREFIX = `${process.env.REDIS_KEY_PREFIX ?? "bull"}_test`;
+
 export default defineConfig({
   resolve: {
     alias: {

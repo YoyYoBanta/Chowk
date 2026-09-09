@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createOrganization } from "@/data/organizations";
 import { createChannel } from "@/data/channels";
-import { redisConnection } from "@/queue/connection";
+import { redisConnection, REDIS_KEY_PREFIX } from "@/queue/connection";
 import { getIngestInboundQueue, QUEUE_NAMES, type IngestInboundJobData } from "@/queue/queues";
 import { processIngestInboundJob } from "./consumers/ingest-inbound.consumer";
 import { GET as eventsGET } from "@/app/api/events/route";
@@ -135,9 +135,14 @@ beforeAll(async () => {
     async (job) => {
       await processIngestInboundJob(job.data);
     },
-    { connection: redisConnection },
+    // Same prefix as the producer (src/queue/queues.ts) — a mismatch here
+    // does not error, it just means this worker never sees the job.
+    { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
   );
-  queueEvents = new QueueEvents(QUEUE_NAMES.ingestInbound, { connection: redisConnection });
+  queueEvents = new QueueEvents(QUEUE_NAMES.ingestInbound, {
+    connection: redisConnection,
+    prefix: REDIS_KEY_PREFIX,
+  });
   await worker.waitUntilReady();
   await queueEvents.waitUntilReady();
 }, 30_000);

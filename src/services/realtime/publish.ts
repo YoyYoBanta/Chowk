@@ -1,6 +1,7 @@
 import IORedis from "ioredis";
 import type { Message } from "@prisma/client";
 import { env } from "@/config/env";
+import { REDIS_KEY_PREFIX } from "@/queue/connection";
 import { logger } from "@/lib/logging/logger";
 import { attachMediaSummary, type MessageWithMediaSummary } from "@/data/media";
 
@@ -63,8 +64,20 @@ export interface MessageCreatedEvent {
   message: MessageWithMediaSummary;
 }
 
+/**
+ * Both the publisher below and the SSE route's subscriber
+ * (src/app/api/events/route.ts) derive their channel name from this one
+ * function, so prefixing here namespaces both halves at once and they cannot
+ * drift apart.
+ *
+ * Pub/sub is lower-risk than the queues - channels are per-organization and
+ * test fixtures mint their own org ids, so a collision needed two runs to
+ * generate the same cuid - but it costs nothing to namespace it with the same
+ * REDIS_KEY_PREFIX the queues use, and it means a single value now accounts
+ * for every key this app writes to a shared Redis.
+ */
 export function realtimeChannelForOrg(organizationId: string): string {
-  return `chowk:realtime:org:${organizationId}`;
+  return `${REDIS_KEY_PREFIX}:chowk:realtime:org:${organizationId}`;
 }
 
 let publisher: IORedis | undefined;

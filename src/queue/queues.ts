@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { redisConnection } from "./connection";
+import { redisConnection, REDIS_KEY_PREFIX } from "./connection";
 import type { MediaReference, NormalizedInboundEvent, NormalizedStatusEvent } from "@/providers/types";
 
 /** Queue name constants — the single source of truth both the producer
@@ -47,6 +47,7 @@ export function getIngestInboundQueue(): Queue<IngestInboundJobData> {
   if (!ingestInboundQueue) {
     ingestInboundQueue = new Queue<IngestInboundJobData>(QUEUE_NAMES.ingestInbound, {
       connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
       defaultJobOptions: {
         attempts: 5,
         backoff: { type: "exponential", delay: 1_000 },
@@ -85,6 +86,7 @@ export function getSendMessageQueue(): Queue<SendMessageJobData> {
   if (!sendMessageQueue) {
     sendMessageQueue = new Queue<SendMessageJobData>(QUEUE_NAMES.sendMessage, {
       connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
       defaultJobOptions: {
         // Exponential backoff for retryable send failures (architecture.md
         // §7/§13: "let BullMQ retry with exponential backoff... configure
@@ -125,6 +127,7 @@ export function getStatusUpdateQueue(): Queue<StatusUpdateJobData> {
   if (!statusUpdateQueue) {
     statusUpdateQueue = new Queue<StatusUpdateJobData>(QUEUE_NAMES.statusUpdate, {
       connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
       defaultJobOptions: {
         // Bounded retry only (architecture.md §10: "a short retry is
         // acceptable, infinite retry is not") — covers the narrow, real
@@ -163,6 +166,7 @@ export function getDownloadMediaQueue(): Queue<DownloadMediaJobData> {
   if (!downloadMediaQueue) {
     downloadMediaQueue = new Queue<DownloadMediaJobData>(QUEUE_NAMES.downloadMedia, {
       connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
       defaultJobOptions: {
         // Tighter/faster than send-message's or status-update's backoff —
         // Meta's media download URLs are short-lived (context.md §4.4), so

@@ -8,7 +8,7 @@ import { createUser } from "@/data/users";
 import { upsertContact } from "@/data/contacts";
 import { upsertConversationForInbound } from "@/data/conversations";
 import { createPendingOutboundMessage } from "@/data/messages";
-import { redisConnection } from "@/queue/connection";
+import { redisConnection, REDIS_KEY_PREFIX } from "@/queue/connection";
 import { getWhatsAppProvider } from "@/providers/factory";
 import type { SendMessageJobData } from "@/queue/queues";
 import { processSendMessageJob } from "./consumers/send-message.consumer";
@@ -132,7 +132,15 @@ describe("forced Worker restart mid-queue (real Redis + real BullMQ + real Postg
   it("a job stalled by a hard Worker kill is picked up by a fresh Worker and the message ends SENT exactly once, never duplicated", async () => {
     const { org, channel, contact, conversation, user } = await makeFixture("Restart");
 
-    testQueue = new Queue<SendMessageJobData>(TEST_QUEUE_NAME, { connection: redisConnection });
+    // Private queue name, but still under the suite's own key prefix: with
+    // BullMQ's default ("bull") this test's keys would land in the *dev*
+    // keyspace on a shared or managed Redis, which is exactly what
+    // REDIS_KEY_PREFIX exists to prevent. The name keeps it off the
+    // application's queues; the prefix keeps it off another environment's.
+    testQueue = new Queue<SendMessageJobData>(TEST_QUEUE_NAME, {
+      connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
+    });
     await testQueue.waitUntilReady();
 
     // Worker A: short lock so BullMQ detects the stall quickly, and a
@@ -143,7 +151,7 @@ describe("forced Worker restart mid-queue (real Redis + real BullMQ + real Postg
       async (job) => {
         await processSendMessageJob(job.data);
       },
-      { connection: redisConnection, lockDuration: 1000, stalledInterval: 500 },
+      { connection: redisConnection, prefix: REDIS_KEY_PREFIX, lockDuration: 1000, stalledInterval: 500 },
     );
     await workerA.waitUntilReady();
 
@@ -183,7 +191,7 @@ describe("forced Worker restart mid-queue (real Redis + real BullMQ + real Postg
       async (job) => {
         await processSendMessageJob(job.data);
       },
-      { connection: redisConnection, lockDuration: 1000, stalledInterval: 500 },
+      { connection: redisConnection, prefix: REDIS_KEY_PREFIX, lockDuration: 1000, stalledInterval: 500 },
     );
     await workerB.waitUntilReady();
 

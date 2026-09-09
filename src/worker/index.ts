@@ -36,7 +36,7 @@
 import "dotenv/config";
 import { env } from "@/config/env";
 import { Worker, type Job } from "bullmq";
-import { redisConnection } from "@/queue/connection";
+import { redisConnection, REDIS_KEY_PREFIX } from "@/queue/connection";
 import {
   QUEUE_NAMES,
   type IngestInboundJobData,
@@ -63,7 +63,7 @@ function startIngestInboundWorker(): Worker<IngestInboundJobData> {
     async (job: Job<IngestInboundJobData>) => {
       await processIngestInboundJob(job.data);
     },
-    { connection: redisConnection },
+    { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
   );
 
   worker.on("completed", (job) => {
@@ -82,7 +82,7 @@ function startSendMessageWorker(): Worker<SendMessageJobData> {
     async (job: Job<SendMessageJobData>) => {
       await processSendMessageJob(job.data);
     },
-    { connection: redisConnection },
+    { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
   );
 
   worker.on("completed", (job) => {
@@ -110,7 +110,7 @@ function startDownloadMediaWorker(): Worker<DownloadMediaJobData> {
     async (job: Job<DownloadMediaJobData>) => {
       await processDownloadMediaJob(job.data);
     },
-    { connection: redisConnection },
+    { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
   );
 
   worker.on("completed", (job) => {
@@ -137,7 +137,7 @@ function startStatusUpdateWorker(): Worker<StatusUpdateJobData> {
     async (job: Job<StatusUpdateJobData>) => {
       await processStatusUpdateJob(job.data);
     },
-    { connection: redisConnection },
+    { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
   );
 
   worker.on("completed", (job) => {

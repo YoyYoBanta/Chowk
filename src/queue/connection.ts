@@ -20,6 +20,21 @@ import { env } from "@/config/env";
  * attempt a command with no Redis listening, ioredis must not crash the
  * process with an unhandled 'error' event.
  */
+/**
+ * The one prefix every Redis key this app writes is namespaced under.
+ *
+ * Exported from here, next to the connection itself, so producers
+ * (src/queue/queues.ts), consumers (src/worker/index.ts) and the realtime
+ * pub/sub channels (src/services/realtime/publish.ts) all read the same
+ * value from the same place. A producer and a consumer that disagree about
+ * the prefix do not error - they simply operate on different keyspaces and
+ * silently never see each other's jobs, which is the failure this constant
+ * exists to make impossible. See prefix-isolation.integration.test.ts, which
+ * proves both halves of that: mismatched prefixes are invisible to each
+ * other, matching ones are not.
+ */
+export const REDIS_KEY_PREFIX: string = env.REDIS_KEY_PREFIX;
+
 const globalForRedis = globalThis as unknown as {
   redisConnection?: IORedis;
 };

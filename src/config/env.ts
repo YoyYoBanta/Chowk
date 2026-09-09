@@ -13,6 +13,25 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
 
+  // Namespaces every key this app writes to Redis: BullMQ's queue keys and
+  // the realtime pub/sub channels (src/queue/connection.ts re-exports this as
+  // REDIS_KEY_PREFIX, which is the single value both sides import).
+  //
+  // Postgres has had a dedicated `<db>_test` database since M9 so a test run
+  // can never touch dev data. Redis had no equivalent: dev and the
+  // integration suite shared queue names outright. That is harmless while
+  // Redis is a local server nobody else uses, and actively destructive on a
+  // shared or managed one, where a test worker and a dev worker would consume
+  // each other's jobs - a job taken by the wrong consumer is simply gone, and
+  // the resulting failure looks like a queue bug rather than a config
+  // collision. vitest.integration.config.ts overrides this for that reason,
+  // in the same spirit as its DATABASE_URL rewrite.
+  //
+  // Defaults to "bull", BullMQ's own default prefix, so an existing
+  // deployment that never sets this keeps exactly the keyspace it already
+  // has and needs no migration.
+  REDIS_KEY_PREFIX: z.string().min(1).default("bull"),
+
   SESSION_SECRET: z.string().min(32),
 
   META_APP_SECRET: z.string().optional(),

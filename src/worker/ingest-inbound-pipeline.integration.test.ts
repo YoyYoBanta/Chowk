@@ -4,7 +4,7 @@ import { Worker, QueueEvents } from "bullmq";
 import { prisma } from "@/lib/prisma";
 import { createOrganization } from "@/data/organizations";
 import { createChannel } from "@/data/channels";
-import { redisConnection } from "@/queue/connection";
+import { redisConnection, REDIS_KEY_PREFIX } from "@/queue/connection";
 import { getIngestInboundQueue, QUEUE_NAMES, type IngestInboundJobData } from "@/queue/queues";
 import { processIngestInboundJob } from "./consumers/ingest-inbound.consumer";
 import type { NormalizedInboundEvent } from "@/providers/types";
@@ -87,9 +87,15 @@ describe("ingest-inbound queue, end to end (real Redis + real BullMQ + real Post
       async (job) => {
         await processIngestInboundJob(job.data);
       },
-      { connection: redisConnection },
+      // Must carry the same prefix as the producer (src/queue/queues.ts), or
+      // this worker blocks on a keyspace nobody writes to and the test times
+      // out rather than failing with anything explanatory.
+      { connection: redisConnection, prefix: REDIS_KEY_PREFIX },
     );
-    queueEvents = new QueueEvents(QUEUE_NAMES.ingestInbound, { connection: redisConnection });
+    queueEvents = new QueueEvents(QUEUE_NAMES.ingestInbound, {
+      connection: redisConnection,
+      prefix: REDIS_KEY_PREFIX,
+    });
     await worker.waitUntilReady();
     await queueEvents.waitUntilReady();
 
