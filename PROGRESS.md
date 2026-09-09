@@ -294,7 +294,7 @@ The user's instruction, once the source was confirmed: keep it, don't discard, f
 
 ---
 
-## 2026-09-09 — new-machine bring-up, an M7 send-path bug, and M10's field-name verification pass
+## 2026-09-09 — new-machine bring-up, an M7 send-path bug, M10's field-name verification pass, back onto git, and cloud-migration prep
 
 No milestone started or finished. This session re-established the project on a
 fresh Windows machine, fixed one real M7 bug, and did the live-docs
@@ -430,9 +430,111 @@ received would be shown as permanently failed.
   Both orderings are proven against real Postgres in
   `status-update.consumer.integration.test.ts`.
 
+### Working tree consolidated, and the project is on git again
+
+The project had been worked on for weeks in an **unversioned copy**. The
+remote was not, as assumed, stuck at M6 — its HEAD was `87f87c0` (2026-08-26)
+and already contained M7/M8, M9, and both dashboard redesigns. It was stale
+only relative to this session. Everything since has been committed on top of
+that real history rather than force-pushed over it.
+
+- The working tree is now `scratch\Chowk-repo`, a real clone. The old
+  unversioned `scratch\Chowk` has been deleted; `.infra\` and `node_modules`
+  were moved into the clone, and the integration suite was re-run against the
+  moved `pgdata` to prove nothing was lost.
+- **`.gitattributes` added** (`* text=auto`, `*.ps1 eol=crlf`, `*.sh eol=lf`,
+  binary types declared ahead of need). The stored blobs were always LF; what
+  was missing was anything *saying* so, which left the convention resting on
+  each clone's `core.autocrlf`. Copying between two trees produced a diff
+  where ~200 files appeared modified and hid the 17 that really were.
+- **Two orphan gitlinks untracked** (`.claude/worktrees/agent-*`, mode
+  160000, no `.gitmodules`) — every fresh clone was inheriting two broken
+  submodule refs.
+- The GitHub account was renamed; the canonical remote is now
+  `https://github.com/Productmanager007/Chowk.git`. The old URL is a redirect,
+  and redirects are not permanent.
+
+**A measurement trap worth remembering:** piping `git show` through PowerShell
+rewrites newlines, so it cannot be used to inspect a blob's line endings — it
+reports CRLF regardless. It produced a confidently wrong conclusion here until
+the bytes were checked via `cmd` redirection instead.
+
+### Cloud migration prep — Redis/MinIO (and possibly Postgres) moving to managed services
+
+Investigated before provisioning, so the answers are recorded rather than
+rediscovered. Everything below was tested, not asserted from memory.
+
+**Needs no change:**
+
+- **`rediss://` is accepted** by `env.ts` as-is. `z.string().url()` is
+  scheme-agnostic; `rediss://`, `redis://…/1` and `postgresql://…?sslmode=require`
+  all pass, and garbage is still rejected.
+- **ioredis needs no explicit TLS options.** The `rediss://` scheme alone sets
+  `tls: true`, and `maxRetriesPerRequest: null` (BullMQ's requirement) is
+  preserved.
+- **Postgres moving to a managed service needs no code change.** Nothing in
+  production code hardcodes `localhost`; trust auth is a purely local
+  arrangement, so a cloud move is a `.env` edit. `vitest.integration.config.ts`'s
+  `_test` rewrite was verified to preserve query strings, so
+  `…/chowk?sslmode=require` becomes `…/chowk_test?sslmode=require` correctly.
+
+**Needs values only:** Cloudflare R2 wants `region=auto` (though `us-east-1`
+and empty both alias to `auto`, so the current default would not break) and an
+endpoint of `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. Cloudflare's docs
+do not state whether `forcePathStyle` is required — deliberately left
+unverified rather than guessed; confirm on first connection. R2 lacks ACLs,
+bucket policies and versioning, none of which this code uses.
+
+**Still to check when credentials exist:** that `sslmode=require` is honoured
+through `@prisma/adapter-pg` → `pg`, that the provider permits
+`CREATE DATABASE chowk_test` (some model this as branches instead), and that
+connection limits accommodate `next dev` + the worker + the test suite.
+
+**One architectural caveat:** BullMQ needs blocking commands and Lua
+scripting. Standard managed Redis supports both; REST-only/serverless tiers do
+not, and per-command pricing makes BullMQ's blocking polls expensive. This is
+the one finding that could force a different provider choice.
+
+### Redis keyspace isolation — `REDIS_KEY_PREFIX` (the one real code change)
+
+The only genuine gap the investigation found. Postgres had `<db>_test` since
+M9; Redis had nothing, so dev and the integration suite shared queue names and
+pub/sub channels outright. Harmless on a local server nobody else uses;
+destructive on a shared one, and *silently* so — whichever worker blocks first
+wins the job, so the loser never sees it, with no error anywhere. It reads as
+a lost job or a broken worker rather than a config collision.
+
+- `REDIS_KEY_PREFIX` validated in `env.ts`, defaulting to `"bull"` (BullMQ's
+  own default) so an existing deployment keeps its keyspace and needs no
+  migration. Exported once from `src/queue/connection.ts` so producers and
+  consumers cannot disagree.
+- Threaded through all four queues, all four workers, and
+  `realtimeChannelForOrg` — which covers both halves of the SSE path at once,
+  since the publisher and the subscriber both derive their channel from it.
+- `vitest.integration.config.ts` appends `_test`, mirroring its `DATABASE_URL`
+  rewrite.
+- **A prefix, not a Redis DB number.** ioredis does parse a db from the URL
+  path (`redis://h:6379/1` → db 1), but several managed providers expose only
+  db 0 — that approach would isolate on a laptop and quietly stop isolating
+  once pointed at the cloud.
+- **Latent bug fixed**: `forced-restart.integration.test.ts` used a private
+  queue *name* but BullMQ's default `bull` prefix, so on a shared Redis its
+  keys would have landed in the **dev** keyspace. Producer and consumer agreed,
+  so it passed and would have kept passing until it was polluting a real
+  environment.
+- Two other integration tests build their own consumers against the real
+  queues and had to take the prefix too — they went from passing to 60-second
+  timeouts, which is the failure mode this constant exists to prevent,
+  demonstrated on the change that introduced it.
+- New `src/queue/prefix-isolation.integration.test.ts` asserts **both**
+  directions: mismatched prefixes never see each other's jobs, matching ones
+  do. A one-sided test would also pass if the queue were broken outright.
+  Verified non-vacuous by running a copy with both prefixes equal, which fails
+  two of its three cases.
+
 ### Verified state at end of session
 
-`tsc` 0 errors · `eslint` 0/0 · **157/157 unit** (was 123) · **66/66
+`tsc` 0 errors · `eslint` 0/0 · **158/158 unit** (was 123) · **69/69
 integration** (was 65) · `next build` clean, 30 routes.
 
 ### Explicitly NOT done
@@ -446,3 +548,10 @@ integration** (was 65) · `next build` clean, 30 routes.
 - Reading the v21–v26 changelogs for breaking changes — belongs to M10 proper.
 - The interactive-reply payload shape (`extractInteractive()` still returns
   `null`) — still deliberately deferred.
+- **The cloud migration itself.** `REDIS_KEY_PREFIX` makes a shared Redis safe
+  to point at, and the investigation above says what will and will not need
+  changing, but nothing has been provisioned and `.env` still points at the
+  local portable stack. No managed Redis, R2 bucket or hosted Postgres has
+  been connected, so none of those findings have been exercised against a real
+  endpoint — the same "matches the docs is not the same as working" caveat that
+  applies to the Cloud API code applies here.
