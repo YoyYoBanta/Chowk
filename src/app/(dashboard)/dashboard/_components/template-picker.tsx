@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { substituteTemplateVariables } from "@/lib/templates/variables";
 
 interface Template {
   name: string;
@@ -136,11 +137,11 @@ export function TemplatePicker({
   // context.md §8.5: "UI presents one input per variable with live
   // preview." Every {{n}} in the body gets replaced by its current input
   // value (blank ones stay as the literal placeholder, so it's obvious
-  // which are still unfilled) — the same substitution shape the real send
-  // path performs, just computed here for display only.
-  const previewBody = selectedTemplate.body.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
-    variables[key] ? variables[key] : match,
-  );
+  // which are still unfilled). This calls the very same helper the real send
+  // path uses (src/lib/templates/variables.ts) rather than re-implementing
+  // the substitution here -- these two had already drifted apart once, so a
+  // preview could differ from what the recipient actually received.
+  const previewBody = substituteTemplateVariables(selectedTemplate.body, variables);
 
   return (
     <div style={panelStyle}>

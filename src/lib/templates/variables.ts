@@ -39,3 +39,33 @@ export function validateTemplateVariables(
   const missing = required.filter((key) => !variables[key]?.trim());
   return { ok: missing.length === 0, missing };
 }
+
+/**
+ * Renders `{{n}}` placeholders in `body` using `variables`.
+ *
+ * **Single pass, by construction.** The previous send-path implementation
+ * (`src/providers/baileys/adapter.ts`) looped over the supplied variables and
+ * ran a separate `split`/`join` per key, which meant a value substituted
+ * early was itself re-scanned by every later key's pass: given
+ * `{{1}} {{2}}` with `{"1": "see {{2}}", "2": "X"}`, the `{{2}}` *inside the
+ * agent-typed value for `{{1}}`* got replaced too, producing "see X X"
+ * instead of "see {{2}} X". Agent-supplied text is data, never a template to
+ * be re-expanded. One `replace` over the original body fixes that: the
+ * callback's return value is never re-examined by the same pass.
+ *
+ * A placeholder with no supplied value (or a blank one) is deliberately left
+ * as the literal `{{n}}` rather than collapsing to an empty string, so an
+ * unfilled slot is visible instead of silently vanishing. On the real send
+ * path `validateTemplateVariables` has already rejected that case before this
+ * is ever reached; the fallback exists for the picker's live preview, which
+ * renders while the agent is still typing.
+ */
+export function substituteTemplateVariables(
+  body: string,
+  variables: Record<string, string>,
+): string {
+  return body.replace(/\{\{(\w+)\}\}/g, (placeholder, key: string) => {
+    const value = variables[key];
+    return value ? value : placeholder;
+  });
+}

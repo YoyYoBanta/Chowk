@@ -16,6 +16,7 @@ import { updateChannelStatus, updateChannelPhoneNumber } from "@/data/channels";
 import { findMessageByProviderMessageId } from "@/data/messages";
 import { getConversationWithContact } from "@/data/conversations";
 import { createTemplate, listTemplates, getTemplateByName } from "@/data/templates";
+import { substituteTemplateVariables } from "@/lib/templates/variables";
 import { getIngestInboundQueue, getStatusUpdateQueue, QUEUE_NAMES } from "@/queue/queues";
 import { createDbAuthState } from "./session-store";
 import {
@@ -465,11 +466,12 @@ export class BaileysProvider implements WhatsAppProvider {
     }
 
     const components = template.components as { body?: string } | null;
-    let bodyText = components?.body ?? "";
     // Positional variable substitution: Meta templates use {{1}}, {{2}}, ...
-    for (const [key, value] of Object.entries(p.variables)) {
-      bodyText = bodyText.split(`{{${key}}}`).join(value);
-    }
+    // Shares one implementation with the picker's live preview
+    // (src/lib/templates/variables.ts) so what the agent previews is exactly
+    // what goes on the wire, and so a substituted value containing {{n}} is
+    // never re-expanded -- see substituteTemplateVariables' own doc comment.
+    const bodyText = substituteTemplateVariables(components?.body ?? "", p.variables);
 
     return this._doSendText(p.channelId, p.to, bodyText);
   }
