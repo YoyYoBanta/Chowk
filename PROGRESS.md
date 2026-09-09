@@ -291,3 +291,158 @@ The user's instruction, once the source was confirmed: keep it, don't discard, f
 - `WHATSAPP_PROVIDER` is still `baileys` in `.env` — this was never actually switched live, so none of the above has run against a real request.
 - Meta field names/payload shapes used throughout (webhook body shape, error codes, template component structure) have NOT been fetched-and-confirmed against `https://developers.facebook.com/docs/whatsapp/cloud-api` per context.md rule 1 — flagged in `TODO-VERIFY.md`, not guessed silently.
 - context.md §11's explicit gate — M1–M9 done *and used* before M10 starts — was not honored. This is now a fact of the codebase's history; revisit before treating M10 as real.
+
+---
+
+## 2026-09-09 — new-machine bring-up, an M7 send-path bug, and M10's field-name verification pass
+
+No milestone started or finished. This session re-established the project on a
+fresh Windows machine, fixed one real M7 bug, and did the live-docs
+verification `TODO-VERIFY.md` had been demanding for M10 since 2026-08-22.
+
+### Machine setup (this box has no Node, no Docker, no VC++ runtime)
+
+The 2026-08-22 pairing and everything else local lived on the *previous*
+device; none of it travelled with the repo. What it took to get green here:
+
+- **Portable Node 26.7.0** in `.infra\node-v26.7.0-win-x64` — not on the system
+  PATH, so every shell must prepend it. `setup-node.ps1`/`setup-infra.ps1`/
+  `activate-and-run.ps1` had `c:\Users\Msi\...` hardcoded; all three now use
+  `Join-Path $PSScriptRoot ".infra"` so they work on any machine.
+- **`docker compose up -d` does not work here.** Docker Desktop has a stale
+  registry entry but its files are gone. The portable stack
+  (`setup-infra.ps1` → `start-infra.ps1`) is the working path.
+- **`start-infra.ps1` was stale and broken** — old hardcoded path, wrong redis
+  subpath, wrong data-dir name, and a real bug: `Start-Process -ArgumentList`
+  does *not* quote array elements containing spaces (the call operator `&`
+  does), so this repo's path ("Amber user") split MinIO's data dir into two
+  arguments and dropped `--console-address`. Rewritten with per-service port
+  checks, readiness polling, log redirection, and idempotent re-runs.
+- **Keep `.ps1` files pure ASCII.** Windows PowerShell 5.1 reads a UTF-8 file
+  with no BOM as Windows-1252, turning an em-dash into a curly quote — which
+  5.1 treats as a *string delimiter*, so the script fails to parse with errors
+  pointing at unrelated lines. Cost a full debugging detour.
+- **Postgres needs an app-local VC++ CRT.** EDB's `initdb.exe` fails with
+  `STATUS_DLL_NOT_FOUND` because no VC++ redistributable is installed and the
+  session isn't elevated. Worked around by copying the Microsoft-signed CRT
+  DLLs from the local Edge install into `.infra\pgsql\bin\`. Installing the
+  real redistributable with admin rights makes those copies redundant.
+- `npm install` under npm 11 blocks install scripts, which skips Prisma's
+  client generation — `npx prisma generate` must be run explicitly after any
+  `node_modules` wipe, or `tsc` fails.
+- Both `chowk` and `chowk_test` are migrated and seeded. The integration suite
+  needs the *seed* in `chowk_test`, not just the migrations —
+  `login.integration.test.ts` asserts against the seeded admin.
+
+### M7 — a real bug in the send path (fixed)
+
+M7 remains **done** (all task boxes and both required tests were already
+checked off on 2026-08-23; re-verified green here). One genuine defect found
+while reading the code:
+
+- **Template variable substitution was sequential, and diverged from the
+  preview.** `BaileysProvider.sendTemplate()` looped over the supplied
+  variables running one `split`/`join` per key, so a value substituted for an
+  earlier key was rescanned by every later key's pass: `{{1}} {{2}}` with
+  `{"1": "see {{2}}", "2": "X"}` produced `"see X X"`. Agent-typed text is
+  data, not a template to expand again. Meanwhile `template-picker.tsx`'s live
+  preview used a correct single-pass regex — while claiming in its own comment
+  to be "the same substitution shape the real send path performs". **The agent
+  previewed one message and the recipient received another.**
+- Both now call one shared `substituteTemplateVariables()`
+  (`src/lib/templates/variables.ts`), which is what that file's header always
+  said it existed for. 8 new unit tests, including the re-substitution case,
+  order-independence, and a `$&` value (which `String.replace` would expand as
+  a replacement pattern if anyone swapped the callback for a string).
+
+### M7 live delivery — still not done, and now blocked
+
+M7's "Done when" is proved only against a **mocked** provider. The real
+`sendTemplate()` → `_doSendText()` → socket path has never run.
+
+- `docs/live-verification.md` (new) is the full procedure: prerequisites, the
+  QR pairing sequence, the `lastInboundAt` backdating SQL that forces a closed
+  window without cold-messaging a stranger, the exact handset checks, and
+  where to record the result. Its SQL was validated against `chowk_test`.
+- **Blocked on a dedicated throwaway number.** There is no paired session on
+  this machine (`BaileysSessionData`: 0 rows; both channels `DISCONNECTED`
+  with placeholder `000000000000`). Baileys bans are permanent and
+  unappealable, so nothing gets paired until a disposable handset exists.
+
+### M10 — field names verified against live Meta docs (the work TODO-VERIFY.md asked for)
+
+Every field name, payload shape, and error code in the Cloud API code was
+fetched and checked against `developers.facebook.com`. **All of them are
+correct as written** — nothing was fabricated. Confirmed: the `hub.*`
+handshake, `x-hub-signature-256` with its `sha256=` prefix, the
+`entry/changes/value` nesting, `metadata.phone_number_id`, the
+message/contact/status shapes, `failed` as a real status value, all three send
+payload shapes, `recipient_type`, the media download flow, and all six error
+codes including their retryable/terminal bucketing.
+
+Six real problems surfaced anyway — all fixed, full reasoning in
+`TODO-VERIFY.md`:
+
+1. **`mapMetaError()` never matched the error shape it is given.**
+   `callMetaAPI()` throws the parsed Graph body (`{ error: { code } }`), but
+   the mapper only read an *axios* shape and a bare `err.code`. Nothing ever
+   matched: **every** Meta error became `META_ERROR_UNKNOWN` and was
+   classified terminal, so rate limits permanently failed sends on the first
+   attempt and the five correct codes below were unreachable. This is the
+   session's most consequential find and it was invisible to review — the code
+   looked right. **Treat it as the signature failure mode for the rest of
+   M10: correct-looking code wired to nothing.**
+2. **`uploadMedia()` omitted the required `type` form part** — Meta requires
+   `messaging_product`, `file`, *and* `type`. Every real outbound media upload
+   would have failed. Invisible because M6's tests mock the provider.
+3. **`131056` was terminal** — a retryable per-recipient rate limit hitting
+   the catch-all. Added, along with `133010`/`131051` as explicit terminal
+   codes and a retryable transport-error set.
+4. **A late `failed` could retract a `delivered`** (see below).
+5. **`GRAPH_API_VERSION` was hardcoded** to `v20.0`; now
+   `META_GRAPH_API_VERSION`, validated in `src/config/env.ts`, default
+   `v26.0`. Not urgent — v20.0 expires 2026-09-24, but this adapter has never
+   made a real Graph call, so it is a Phase B prerequisite, not a deadline.
+6. **Media URLs expire ~5 minutes after issue** — the code was already
+   correct; the call site now says so, because the failure mode is a future
+   "optimization" that caches the URL, passes every test, and 403s in
+   production.
+
+### M4 status-progression rule changed (deliberate, not a bug fix)
+
+`src/lib/messages/status-progression.ts` ranked `FAILED` above every status on
+purpose, making it reachable from anywhere and terminal for free. That was
+correct for Baileys and **wrong for Meta**, which emits *both* `delivered` and
+`failed` for one message when the recipient is on several devices and delivery
+succeeds on one but not another — so a message the recipient genuinely
+received would be shown as permanently failed.
+
+- New ranking: `PENDING < SENT < FAILED < DELIVERED < READ`. The rule it
+  encodes: **delivery is a positive fact and is not retracted by a later
+  failure on another device.**
+- **Consequence: `FAILED` is no longer terminal.** Since Meta does not
+  guarantee webhook ordering, the reverse order (`failed` then `delivered`)
+  also converges on `DELIVERED`. A stale `sent` still cannot overwrite a real
+  failure, and every path that writes `FAILED` directly
+  (`send-message.consumer.ts`, `reconcile-stuck.ts`) acts on `PENDING` rows,
+  so all remain forward moves.
+- This narrows context.md §7.4's "or into FAILED" to "from PENDING/SENT only".
+  Both orderings are proven against real Postgres in
+  `status-update.consumer.integration.test.ts`.
+
+### Verified state at end of session
+
+`tsc` 0 errors · `eslint` 0/0 · **157/157 unit** (was 123) · **66/66
+integration** (was 65) · `next build` clean, 30 routes.
+
+### Explicitly NOT done
+
+- M7 live delivery to a real handset — blocked on a throwaway number.
+- Any M10 *connection* work. `WHATSAPP_PROVIDER` is still `baileys` and no
+  Graph call has ever been made. The verification pass upgrades the Cloud API
+  code from "plausible from training data" to "matches current published
+  docs"; it does **not** make it exercised, and finding #1 is direct evidence
+  that matching the docs is not the same as working.
+- Reading the v21–v26 changelogs for breaking changes — belongs to M10 proper.
+- The interactive-reply payload shape (`extractInteractive()` still returns
+  `null`) — still deliberately deferred.

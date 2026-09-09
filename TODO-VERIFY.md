@@ -975,6 +975,92 @@ cares about — everything else the fix-up touched is in `decisions.md` and
   flipping `WHATSAPP_PROVIDER` to `cloud-api` against a real account, fetch
   and read `https://developers.facebook.com/docs/whatsapp/cloud-api` and
   confirm every one of the above against it.**
+
+  **RESOLVED 2026-09-09 — verification pass done against live Meta docs.**
+  Every field name, payload shape, and error code listed above was fetched
+  and checked against `developers.facebook.com`. **All of them are correct**
+  as written; nothing in the list was fabricated or wrong. Details:
+
+  | Checked | Verdict |
+  |---|---|
+  | `hub.mode` = `subscribe`, `hub.verify_token`, `hub.challenge`; echo challenge back | Confirmed |
+  | `x-hub-signature-256`, HMAC-SHA256, `sha256=` prefix | Confirmed. `webhook-verify.ts` already strips the prefix and uses `timingSafeEqual` |
+  | `object` = `whatsapp_business_account`; `entry[].changes[].value`; `field` = `messages` | Confirmed |
+  | `value.metadata.phone_number_id` (and `display_phone_number`) | Confirmed |
+  | `value.messages[]`: `id`, `from`, `timestamp`, `type`, `text.body` | Confirmed |
+  | `value.contacts[0].profile.name` / `wa_id` | Confirmed |
+  | `value.statuses[]`: `id`, `status`, `timestamp`, `recipient_id`, `errors[].code/.title/.message` | Confirmed |
+  | Status values `sent`/`delivered`/`read`/`failed` | Confirmed — `failed` is real, so `mapMetaMessageStatus` is right |
+  | Text send: `messaging_product`/`recipient_type`/`to`/`type`/`text.body` | Confirmed |
+  | Template send: `template.name`, `template.language.code`, `components[].type="body"`, `parameters[].type="text"`/`.text` | Confirmed |
+  | Mark read: `messaging_product`/`status:"read"`/`message_id` | Confirmed |
+  | `recipient_type: "individual"` | Confirmed — required; allowed values `individual`, `group` |
+  | Media download: `GET /{media-id}` -> `url`/`mime_type`/`sha256`/`file_size`/`id`, binary fetch needs the Bearer token | Confirmed |
+  | Error codes 4, 190, 130429, 80007, 131047, 131026 | Confirmed, and all bucketed correctly retryable-vs-terminal |
+
+  **Six real problems the same pass turned up — none of them wrong field
+  names. All six were fixed on 2026-09-09; recorded here because the reasons
+  outlive the diffs.**
+
+  1. **FIXED — `mapMetaError()` never matched the error shape it is given, so
+     every Meta error was terminal.** `callMetaAPI()` does `throw data` with
+     the parsed Graph body (`{ error: { code, message } }`), but the mapper
+     read only `err.response.data.error.code` (an *axios* shape; the adapter
+     uses `fetch`) and a bare `err.code`. Neither ever matched: every Graph
+     error fell through to `META_ERROR_UNKNOWN`, classified **terminal**. The
+     five correctly-identified codes below were unreachable, and rate limits
+     — the entire reason a retryable bucket exists — were permanently failing
+     sends on the first attempt. This was the most consequential finding of
+     the pass and was invisible to review, because the code *looked* right.
+     All three shapes are now accepted, with `error-map.test.ts` pinning the
+     one actually thrown.
+  2. **FIXED — `uploadMedia()` omitted the required `type` form field.** Meta
+     documents `POST /{phone-number-id}/media` as requiring **three** parts:
+     `messaging_product`, `file`, **and `type`**. Every outbound media upload
+     would have failed on first real use. No test caught it because M6's
+     object-storage tests mock the provider; `adapter.upload.test.ts` now
+     asserts all three parts.
+  3. **FIXED — `131056` was being treated as terminal.** Too many messages to
+     the same recipient pair in a short period: a *retryable* rate limit that
+     was hitting the terminal catch-all, permanently failing sends that would
+     have succeeded on retry. Also added `133010` (number not registered) and
+     `131051` (unsupported message type) as explicit terminal codes, and a
+     transport-error set (ECONNRESET/ETIMEDOUT/undici timeouts) as retryable.
+     The catch-all stays terminal on purpose — an unrecognized code should
+     surface, not retry forever.
+  4. **FIXED — a late `failed` could retract a `delivered`.** Meta emits BOTH
+     `delivered` and `failed` for one message when the recipient is on
+     several devices and delivery succeeds on one but not another. This was
+     **not** a missing guard: M4's `status-progression.ts` ranked FAILED above
+     every status *deliberately*, which was correct for Baileys' semantics and
+     wrong for Meta's. Fixed by revisiting the rule rather than special-casing
+     around it — FAILED now ranks between SENT and DELIVERED, encoding
+     "delivery is a positive fact and is not retracted by a later failure on
+     another device". Consequence: FAILED is no longer terminal, so the
+     reversed webhook order (`failed` then `delivered`) also converges on
+     DELIVERED. Full reasoning is in that file's doc comment; both orderings
+     are proven against real Postgres in
+     `status-update.consumer.integration.test.ts`. This narrows context.md
+     §7.4's "or into FAILED" to "from PENDING/SENT only".
+  5. **FIXED — `GRAPH_API_VERSION` was hardcoded to `v20.0`.** Now read from
+     `META_GRAPH_API_VERSION` (validated in `src/config/env.ts`, shape-checked
+     against `/^v\d+\.\d+$/`, defaulting to `v26.0`), so the version is a
+     deploy-time decision rather than a code change. **Not urgent**: v20.0
+     expires 2026-09-24, but `WHATSAPP_PROVIDER=baileys` and this adapter has
+     never made a real Graph call, so nothing breaks on that date — it is a
+     Phase B prerequisite, not a deadline. Reading the v21–v26 changelogs for
+     breaking changes belongs to M10 proper, when we actually connect.
+  6. **FIXED (documented) — media URLs expire ~5 minutes after issue.** The
+     download path already re-resolves the URL immediately before fetching
+     bytes, so it was correct; the risk was a future "optimization" caching
+     it. Now commented at the call site explaining why the extra round-trip
+     is load-bearing.
+
+  Still unverified after this pass, because docs alone cannot settle them:
+  the interactive-reply payload shape (see the next bullet), and every one
+  of the above against a **live** request. This pass upgrades the code from
+  "plausible from training data" to "matches current published docs" — it
+  does not make it exercised.
 - **`InteractivePayload` extraction from a real Meta interactive-reply
   webhook was left unimplemented on purpose** (`extractInteractive()` in
   the webhook route always returns `null`) rather than guessing Meta's real
