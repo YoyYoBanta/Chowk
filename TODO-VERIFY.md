@@ -193,6 +193,12 @@
   itself as unsuitable for anything beyond a local dev/bot use case and
   recommends "writing an auth state for use with a proper SQL or No-SQL
   DB" without specifying one).
+  *Note on wiring:* During Phase A live test path setup, it was discovered
+  that the DB session store from M2 was briefly bypassed when `BAILEYS_SESSION_DIR`
+  was scaffolded, routing credentials to local disk instead of Postgres.
+  This was fixed by establishing PostgreSQL as the single, authoritative
+  session store across `scripts/pair.ts`, `scripts/smoke.ts`, and `src/worker/index.ts`,
+  ensuring multi-tenant channel credential isolation and container durability.
 
 - **`IngestInboundJobData` wraps `NormalizedInboundEvent` with
   `organizationId`/`provider` rather than the queue carrying the bare event.**

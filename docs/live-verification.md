@@ -99,11 +99,17 @@ npm run activate-channel -- <channelId>
 
 Flips `Channel.status` to `ACTIVE` so the Worker will pair it on boot.
 
-### 4. Start the Worker and pair
+### 4. Pair the channel
+
+You can pair using the standalone pairing script:
 
 ```powershell
-npm run worker
+npm run pair
+# Or specify a channel id explicitly:
+# npm run pair -- <channelId>
 ```
+
+Or start the worker directly (`npm run worker`).
 
 With no stored session the adapter prints a **QR code to stdout**
 (`qrcode-terminal`). On the throwaway handset: WhatsApp → Settings → Linked
@@ -112,7 +118,7 @@ Devices → Link a device → scan.
 Wait for:
 
 ```
-[baileys] channel <id> connected - session paired and live.
+[baileys] channel <id> connected — session paired and live.
 ```
 
 Leave the Worker running for the rest of the procedure. It holds the socket;

@@ -54,3 +54,8 @@ next-env.d.ts
 
 # stray agent worktrees
 /.claude/worktrees/
+
+# baileys session state (auth credentials)
+/.baileys_session/
+/.baileys_auth/
+/sessions/

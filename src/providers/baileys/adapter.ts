@@ -40,6 +40,42 @@ import type {
   WhatsAppProvider,
 } from "../types";
 
+function assertSandboxTransport(): void {
+  const transportEnv = process.env.TRANSPORT_ENV ?? "sandbox";
+  if (transportEnv !== "sandbox") {
+    console.error(`
+********************************************************************************
+[SECURITY WARNING] HARD GUARD TRIGGERED
+Baileys provider (Phase A) must NEVER be used with a partner-facing number!
+Meta actively detects and permanently bans phone numbers using unofficial clients.
+Refusing to connect because TRANSPORT_ENV is '${transportEnv}' (must be 'sandbox').
+********************************************************************************
+`);
+    throw new Error(`Baileys provider refused: TRANSPORT_ENV is '${transportEnv}' (must be 'sandbox').`);
+  }
+}
+
+function checkSandboxGuard(): SendResult | null {
+  const transportEnv = process.env.TRANSPORT_ENV ?? "sandbox";
+  if (transportEnv !== "sandbox") {
+    console.error(`
+********************************************************************************
+[SECURITY WARNING] HARD GUARD TRIGGERED
+Baileys provider (Phase A) must NEVER be used with a partner-facing number!
+Meta actively detects and permanently bans phone numbers using unofficial clients.
+Refusing send because TRANSPORT_ENV is '${transportEnv}' (must be 'sandbox').
+********************************************************************************
+`);
+    return {
+      ok: false,
+      retryable: false,
+      code: "UNSAFE_TRANSPORT_ENV",
+      message: `Baileys cannot be used when TRANSPORT_ENV is '${transportEnv}' (must be 'sandbox'). Baileys is for throwaway test numbers only.`,
+    };
+  }
+  return null;
+}
+
 /**
  * Baileys (Phase A / unofficial WhatsApp Web protocol) adapter.
  *
@@ -108,6 +144,7 @@ export class BaileysProvider implements WhatsAppProvider {
   private readonly outboundMediaCache = new Map<string, { buffer: Buffer; mimeType: string }>();
 
   async connect(channel: Channel): Promise<void> {
+    assertSandboxTransport();
     this.channels.set(channel.id, channel);
     await this.startSocket(channel);
   }
@@ -130,6 +167,7 @@ export class BaileysProvider implements WhatsAppProvider {
   }
 
   private async startSocket(channel: Channel): Promise<void> {
+    assertSandboxTransport();
     const { state, saveCreds } = await createDbAuthState(channel.id);
 
     const sock = makeWASocket({ auth: state });
@@ -198,11 +236,16 @@ export class BaileysProvider implements WhatsAppProvider {
       // sock.user is only populated once the socket is actually open — this
       // is the first point the adapter learns the real paired number, so
       // persist it here rather than leaving the placeholder value set at
-      // channel-creation time.
+      // channel-creation time, and mark the channel ACTIVE in Postgres.
       const sock = this.sockets.get(channel.id);
       const decoded = jidDecode(sock?.user?.jid ?? sock?.user?.id);
       if (decoded?.user) {
-        void updateChannelPhoneNumber(channel.organizationId, channel.id, decoded.user);
+        try {
+          void updateChannelPhoneNumber(channel.organizationId, channel.id, decoded.user);
+          void updateChannelStatus(channel.organizationId, channel.id, "ACTIVE");
+        } catch {
+          // Non-critical if running in standalone test mode without full DB
+        }
       }
       return;
     }
@@ -223,7 +266,11 @@ export class BaileysProvider implements WhatsAppProvider {
         // DISCONNECTED and surface it in the admin UI. Do not retry an
         // auth failure in a loop.").
         this.connectionStates.set(channel.id, { status: "disconnected", reason: "logged_out" });
-        void updateChannelStatus(channel.organizationId, channel.id, "DISCONNECTED");
+        try {
+          void updateChannelStatus(channel.organizationId, channel.id, "DISCONNECTED");
+        } catch {
+          // Non-critical if running in standalone test mode without full DB
+        }
         console.error(
           `[baileys] channel ${channel.id} logged out — not retrying, marked DISCONNECTED`,
         );
@@ -335,6 +382,9 @@ export class BaileysProvider implements WhatsAppProvider {
    * comment for that fail-open case).
    */
   async sendText(p: SendTextParams): Promise<SendResult> {
+    const guard = checkSandboxGuard();
+    if (guard) return guard;
+
     const windowRejection = await this.checkWindow(p.channelId, p.to);
     if (windowRejection) return windowRejection;
 
@@ -342,18 +392,50 @@ export class BaileysProvider implements WhatsAppProvider {
   }
 
   private async _doSendText(channelId: string, to: string, body: string): Promise<SendResult> {
+    const guard = checkSandboxGuard();
+    if (guard) return guard;
+
     const sock = this.sockets.get(channelId);
     if (!sock) {
       return {
         ok: false,
         retryable: true,
         code: "NO_ACTIVE_SESSION",
-        message: "No active WhatsApp session for this channel — it may be reconnecting.",
+        message: "No active WhatsApp session for this channel — it may be reconnecting or uninitialized.",
       };
     }
 
+    const jid = digitsToJid(to);
+
+    // Pre-flight check if recipient is registered on WhatsApp
     try {
-      const sent = await sock.sendMessage(digitsToJid(to), { text: body });
+      const waResults = await sock.onWhatsApp(jid);
+      if (Array.isArray(waResults) && waResults.length > 0) {
+        const check = waResults[0];
+        if (check && !check.exists) {
+          return {
+            ok: false,
+            retryable: false,
+            code: "RECIPIENT_NOT_ON_WHATSAPP",
+            message: `Recipient ${to} is not registered on WhatsApp.`,
+          };
+        }
+      }
+    } catch (checkErr) {
+      const checkMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+      if (/network|socket|econnrefused|etimedout|enotfound|disconnect/i.test(checkMsg)) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "NETWORK_FAILURE",
+          message: `Network failure connecting to WhatsApp servers: ${checkMsg}`,
+        };
+      }
+      // If non-network check error, proceed to try sending directly
+    }
+
+    try {
+      const sent = await sock.sendMessage(jid, { text: body });
       const providerMessageId = sent?.key?.id;
       if (!providerMessageId) {
         return {
@@ -365,11 +447,28 @@ export class BaileysProvider implements WhatsAppProvider {
       }
       return { ok: true, providerMessageId };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (/not registered|not-authorized|item-not-found|404|no-account/i.test(errorMsg)) {
+        return {
+          ok: false,
+          retryable: false,
+          code: "RECIPIENT_NOT_ON_WHATSAPP",
+          message: `Recipient ${to} is not registered on WhatsApp: ${errorMsg}`,
+        };
+      }
+      if (/network|socket|econnrefused|etimedout|enotfound|disconnect|closed/i.test(errorMsg)) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "NETWORK_FAILURE",
+          message: `Network failure while sending via Baileys: ${errorMsg}`,
+        };
+      }
       return {
         ok: false,
         retryable: true,
         code: "SEND_THREW",
-        message: error instanceof Error ? error.message : "Unknown error sending via Baileys.",
+        message: errorMsg,
       };
     }
   }
@@ -391,6 +490,9 @@ export class BaileysProvider implements WhatsAppProvider {
    * section.
    */
   async sendMedia(p: SendMediaParams): Promise<SendResult> {
+    const guard = checkSandboxGuard();
+    if (guard) return guard;
+
     const windowRejection = await this.checkWindow(p.channelId, p.to);
     if (windowRejection) return windowRejection;
 
@@ -429,11 +531,20 @@ export class BaileysProvider implements WhatsAppProvider {
       this.outboundMediaCache.delete(p.media.id);
       return { ok: true, providerMessageId };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (/network|socket|econnrefused|etimedout|enotfound|disconnect|closed/i.test(errorMsg)) {
+        return {
+          ok: false,
+          retryable: true,
+          code: "NETWORK_FAILURE",
+          message: `Network failure while sending media via Baileys: ${errorMsg}`,
+        };
+      }
       return {
         ok: false,
         retryable: true,
         code: "SEND_THREW",
-        message: error instanceof Error ? error.message : "Unknown error sending media via Baileys.",
+        message: errorMsg,
       };
     }
   }
@@ -451,6 +562,9 @@ export class BaileysProvider implements WhatsAppProvider {
   }
 
   async sendTemplate(p: SendTemplateParams): Promise<SendResult> {
+    const guard = checkSandboxGuard();
+    if (guard) return guard;
+
     const channel = this.channels.get(p.channelId);
     if (!channel) {
       return { ok: false, retryable: true, code: "NO_ACTIVE_SESSION", message: "Channel not connected." };

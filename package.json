@@ -12,7 +12,9 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "seed": "prisma db seed",
     "worker": "tsx src/worker/index.ts",
-    "activate-channel": "tsx scripts/activate-channel.ts"
+    "activate-channel": "tsx scripts/activate-channel.ts",
+    "pair": "tsx scripts/pair.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1115.0",

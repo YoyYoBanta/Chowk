@@ -53,10 +53,9 @@ export interface DbAuthState {
 }
 
 /**
- * Loads (or initializes) the persisted auth state for a channel, and
- * returns the `{ state, saveCreds }` pair `makeWASocket({ auth })` expects
- * — `saveCreds` is meant to be called from the socket's `creds.update`
- * event handler, exactly as `useMultiFileAuthState`'s own docs show.
+ * Loads (or initializes) the persisted auth state for a channel from Postgres,
+ * and returns the `{ state, saveCreds }` pair `makeWASocket({ auth })` expects
+ * — `saveCreds` is called from the socket's `creds.update` event handler.
  */
 export async function createDbAuthState(channelId: string): Promise<DbAuthState> {
   const existingRow = await prisma.baileysSessionData.findUnique({ where: { channelId } });
@@ -65,10 +64,16 @@ export async function createDbAuthState(channelId: string): Promise<DbAuthState>
     : initAuthCreds();
 
   const saveCreds = async (): Promise<void> => {
-    await prisma.baileysSessionData.upsert({
+    const upserted = await prisma.baileysSessionData.upsert({
       where: { channelId },
       create: { channelId, creds: toJsonSafe(creds) },
       update: { creds: toJsonSafe(creds) },
+    });
+
+    // Link Channel.sessionRef to BaileysSessionData.id if not already linked
+    await prisma.channel.updateMany({
+      where: { id: channelId, sessionRef: null },
+      data: { sessionRef: upserted.id },
     });
   };
 
@@ -122,4 +127,34 @@ export async function createDbAuthState(channelId: string): Promise<DbAuthState>
     state: { creds, keys },
     saveCreds,
   };
+}
+
+/**
+ * Checks if a valid, registered session currently exists for a channel in Postgres.
+ */
+export async function hasValidSession(channelId: string): Promise<boolean> {
+  try {
+    const row = await prisma.baileysSessionData.findUnique({ where: { channelId } });
+    if (!row || !row.creds) return false;
+    const creds = fromJsonSafe<AuthenticationCreds>(row.creds);
+    return !!(creds && (creds.me || creds.registered));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cleans up stored DB session entries on logout.
+ */
+export async function clearSession(channelId: string): Promise<void> {
+  try {
+    await prisma.baileysSignalKey.deleteMany({ where: { channelId } });
+    await prisma.baileysSessionData.deleteMany({ where: { channelId } });
+    await prisma.channel.updateMany({
+      where: { id: channelId },
+      data: { sessionRef: null, status: "DISCONNECTED" },
+    });
+  } catch {
+    // Best-effort cleanup
+  }
 }

@@ -9,6 +9,7 @@ import { z } from "zod";
  */
 const envSchema = z.object({
   WHATSAPP_PROVIDER: z.enum(["baileys", "cloud-api"]),
+  TRANSPORT_ENV: z.string().default("sandbox"),
 
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
