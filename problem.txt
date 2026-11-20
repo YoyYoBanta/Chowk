@@ -1,0 +1,833 @@
+# context.md — Chowk, a WhatsApp team inbox platform (Tier 1)
+
+> **Read this file completely before writing any code.** It defines scope, constraints, data model, and build order. Do not expand scope beyond what is written here. If something is ambiguous, stop and ask rather than inventing behaviour.
+
+> **Working product name:** Chowk. Change the name in one place only — a constant in `src/config/branding.ts`. Never hardcode the product name in components.
+
+---
+
+## 0. Rules for the coding agent
+
+0. **All WhatsApp access goes through the provider adapter defined in Section 8.0.** Development starts on Baileys (unofficial) and migrates to Meta Cloud API (official) later. No file outside `src/providers/` may import a Baileys symbol, reference a Baileys type, or know which provider is active. This is the single most important architectural rule in this document — violating it turns a two-week migration into a rewrite.
+1. **Do not trust your training data for Meta WhatsApp Cloud API specifics.** API versions, field names, pricing models, rate limits, and error codes change frequently. Before implementing any Meta API call, fetch and read the current official documentation at `https://developers.facebook.com/docs/whatsapp/cloud-api`. If you cannot fetch it, write the integration behind an interface, stub it, and flag it clearly in a `TODO-VERIFY.md` file at repo root.
+2. **Never invent an endpoint, field name, or error code.** If you are not certain a field exists, do not use it. Write the code so the uncertain part is isolated and easy to correct.
+3. **Build in the milestone order in Section 11.** Each milestone must run end-to-end before starting the next. Do not scaffold all modules at once.
+4. **Every database query must be scoped by `organization_id`.** No exceptions. See Section 7.4.
+5. **Prefer boring, well-documented libraries over clever ones.** This system will be maintained by a small team.
+6. **Write the failure path first.** Webhook handlers, message sends, and media downloads must all handle failure explicitly. Silent failure is the worst outcome in this product.
+7. When you finish a milestone, update `PROGRESS.md` with what works, what is stubbed, and what needs human verification.
+
+---
+
+## 1. What we are building
+
+A multi-tenant web platform that lets a team of sales agents manage WhatsApp conversations with customers from a shared inbox, backed by Meta's official WhatsApp Cloud API.
+
+This is Tier 1 — the foundation. It is a genuinely usable product on its own, and it is the base that later tiers (broadcasts, automation, analytics, AI assistance) build on top of.
+
+### 1.1 Primary user story
+
+> A sales agent logs in, sees every WhatsApp conversation their team is handling across the company's connected numbers, opens one, reads the history, and replies — either freely if the customer messaged in the last 24 hours, or with an approved template if not. A manager can see all conversations, assign them to agents, and search across everything.
+
+### 1.2 Why multi-tenant from day one
+
+The organisation using this first is the operator's own company. The intent is to offer the same software to other companies later. Retrofitting tenancy into a single-tenant schema is one of the most expensive refactors in software. We pay the small cost now: every table carries `organization_id`, every query filters on it.
+
+**Note:** onboarding *other companies'* WhatsApp numbers requires approval as a Meta Tech Provider (Embedded Signup). That is a business/legal process running in parallel and is **out of scope for this codebase in Tier 1**. Tier 1 supports numbers connected manually by an admin who already holds the credentials.
+
+### 1.3 Two-phase transport strategy
+
+Development happens in two phases against the same product code:
+
+| Phase | Transport | Purpose |
+|---|---|---|
+| **Phase A (now)** | Baileys — unofficial, WhatsApp Web protocol | Build and test the whole product without waiting on Meta approvals, business verification, or template review cycles |
+| **Phase B (later)** | Meta WhatsApp Cloud API — official | Production. Required before any real customer volume or any external sale |
+
+**The product is designed to Meta's rules from day one, even in Phase A.** Baileys does not enforce the 24-hour window, does not require templates, and has no approval process — it will happily let you build a product that cannot exist on the official API. If we let Phase A behaviour shape the product, Phase B becomes a redesign rather than a swap.
+
+So: the 24-hour window is enforced in our own code during Phase A even though Baileys does not require it. Templates are modelled and required for out-of-window sends even though Baileys would let us send free text. Message IDs, status progression, and media handling follow Meta's model. Baileys is treated as a *dumb pipe* that happens to deliver messages.
+
+**Risks of Phase A, stated plainly so they are not forgotten:**
+- Baileys is unofficial and violates WhatsApp's Terms of Service. Numbers used with it can be banned, with no appeal.
+- Use a **dedicated test number** in Phase A. Never a number carrying real partner or customer relationships, and never an agent's working number.
+- Phase A is for building and internal testing only. Do not onboard real customer traffic, do not sell access, and do not let the team come to depend on it daily.
+- Session state is fragile — it breaks on re-login, device changes, and protocol updates. Do not invest engineering time making Baileys session management robust. It is temporary.
+
+---
+
+## 2. Scope
+
+### 2.1 In scope (Tier 1)
+
+| # | Capability |
+|---|---|
+| F1 | Webhook ingestion — receive, verify, deduplicate, and persist inbound messages and status updates from Meta |
+| F2 | Message store — full conversation history per contact per channel |
+| F3 | Shared team inbox — chat list, thread view, send text and media |
+| F4 | 24-hour messaging window — track state, enforce it in the UI and API |
+| F5 | Template management — sync from Meta, create, submit, track status, send with variables |
+| F6 | Contacts — profile, custom fields, tags, internal notes |
+| F7 | Chat assignment — assign/unassign a conversation to an agent; open/done status |
+| F8 | Search — across conversations and within a conversation |
+| F9 | Quick replies — saved snippets, insertable into the composer |
+| F10 | Auth, users, and two roles (Admin, Agent) |
+| F11 | Media — upload outbound, download and store inbound before Meta's URLs expire |
+
+### 2.2 Explicitly out of scope (do not build)
+
+Broadcasts and campaigns · segments · visual bot/flow builder · AI agents or AI drafting · analytics dashboards · SLA tracking and escalation · WhatsApp Groups · Instagram · RCS · voice or PSTN calling · Meta catalog and commerce · payments · wallet and billing · CTWA ad tracking · SSO · PII masking · custom role builder · public REST API for third parties · Embedded Signup onboarding · mobile apps.
+
+Some of these are Tier 2. None of them are Tier 1. If you find yourself building one, stop.
+
+---
+
+## 3. Glossary
+
+| Term | Meaning |
+|---|---|
+| **WABA** | WhatsApp Business Account — Meta's container for one or more phone numbers |
+| **Phone Number ID** | Meta's identifier for a single connected number. Sending is done against this, not the phone number itself |
+| **Channel** | Our name for one connected WhatsApp number inside an organisation |
+| **Contact** | An end customer, identified by phone number (WhatsApp ID / `wa_id`) |
+| **Conversation** | The thread between one channel and one contact. Unique on `(channel_id, contact_id)` |
+| **wamid** | Meta's globally unique message ID (`wamid.XXXX`). Our idempotency key |
+| **Template** | A pre-approved message format. Required to message outside the 24-hour window |
+| **Service window** | The 24-hour period after a contact's inbound message during which free-form replies are allowed |
+| **Cloud API** | Meta-hosted WhatsApp Business API. What we build on |
+| **Coexistence** | Mode where a number works on both the WhatsApp Business app and the API simultaneously |
+
+---
+
+## 4. Platform constraints — the physics of this product
+
+These are rules imposed by Meta, not design choices. The product must be built around them. Violating them causes message failures, degraded account quality, or number bans.
+
+> **These constraints apply in Phase A too.** Baileys will not enforce most of them. We enforce them ourselves, in our own code, from the first commit. Section 8.0.4 lists exactly which rules the Baileys adapter must simulate.
+
+### 4.1 The 24-hour service window
+
+- A contact sending an inbound message opens (or resets) a 24-hour window on that conversation.
+- **Inside the window:** any free-form message may be sent — text, media, interactive.
+- **Outside the window:** only an approved template message may be sent. Free-form sends are rejected by Meta.
+- The window is per `(channel, contact)` pair, not per organisation.
+- Sending a template does **not** open a window. Only an inbound message from the contact does.
+
+**Product implication:** the composer must always show window state and must disable free-form input when closed, offering template selection instead. Agents discovering this via a cryptic API error is the single most common complaint about tools in this category.
+
+### 4.2 Templates
+
+- Templates live at the WABA level and must be approved by Meta before use.
+- Categories: `MARKETING`, `UTILITY`, `AUTHENTICATION`. Meta may re-categorise a template after submission, which changes its cost.
+- Statuses include `APPROVED`, `PENDING`, `REJECTED`, and paused/disabled states. Status changes are asynchronous — a template approved minutes after submission, or paused days later for poor quality.
+- Templates have components: header (text or media), body, footer, buttons. Body and header text support positional variables.
+- **We must treat Meta as the source of truth** and sync template state, not assume our local copy is current.
+
+### 4.3 Quality, limits, and pacing
+
+- Each phone number carries a **quality rating** from Meta based on user feedback (blocks, reports). It can drop, which throttles the number.
+- Numbers sit in **messaging limit tiers** capping business-initiated conversations per rolling 24 hours. Tiers increase with good quality and volume.
+- Meta applies **pacing** to templates and business portfolios — throttling delivery of new or poorly-performing templates.
+- **Verify current tier values and pacing rules against live Meta documentation.** These changed materially during 2025 and any number in this document would be a guess.
+
+**Product implication:** surface quality rating and limit tier per channel in the UI, read from Meta. Do not compute them ourselves.
+
+### 4.4 Media
+
+- Inbound media arrives as a media ID, not a file. Retrieving it is two steps: get a download URL, then download it with an authenticated request.
+- **Media download URLs are short-lived.** Download and store to our own object storage immediately on webhook receipt. Do not lazily fetch when an agent opens the chat.
+- Outbound media is either uploaded to Meta first (returns a media ID) or referenced by a public HTTPS URL. Prefer upload for reliability.
+
+### 4.5 Webhooks
+
+- Meta sends `GET` for verification (echo the challenge parameter) and `POST` for events.
+- **Payloads may be duplicated, delivered out of order, or retried.** Deduplication on `wamid` is mandatory, not optional.
+- Requests are signed. **Verify the signature header on every request** using the app secret before processing. An unverified webhook endpoint is an open door into your message store.
+- Meta expects a fast `200`. Acknowledge immediately, process asynchronously via a queue. Slow handlers cause retries, which cause duplicates.
+
+### 4.6 Pricing
+
+Meta charges for messaging, and the pricing model has changed more than once (conversation-based, then per-message for templates, with rate revisions). **Do not hardcode any pricing logic or rates in Tier 1.** Cost tracking is Tier 2 and must be built against whatever model is live at that time.
+
+### 4.7 Error handling
+
+Meta returns structured errors with numeric codes. Common categories: expired service window, rate limits, undeliverable recipient, temporary service unavailability.
+
+- Look up current codes in live documentation rather than assuming.
+- Map errors into two buckets in our code: **retryable** (rate limits, transient service errors — retry with exponential backoff) and **terminal** (window expired, invalid recipient, template rejected — surface to the agent with a plain-English explanation).
+- Never retry a terminal error. Never silently swallow either kind.
+
+---
+
+## 5. Architecture
+
+```
+  PHASE A                          PHASE B
+  ┌──────────────────┐             ┌──────────────────┐
+  │ Baileys socket   │             │ Meta webhook     │
+  │ (worker process) │             │ receiver (HTTP)  │
+  └────────┬─────────┘             └────────┬─────────┘
+           │                                │
+           └──────────┬─────────────────────┘
+                      │  both emit the SAME
+                      ▼  NormalizedInboundEvent
+           ┌──────────────────────┐
+           │  Provider Adapter    │  ← the only code that knows
+           │  (src/providers/)    │     which transport is live
+           └──────────┬───────────┘
+                      │
+               ┌──────▼──────┐
+               │ Redis Queue │
+               └──────┬──────┘
+                      │
+           ┌──────────▼───────────┐
+           │   Ingest Worker      │  dedupe, persist, fetch media,
+           │                      │  emit realtime
+           └──────────┬───────────┘
+                      │
+   ┌──────────────┐   │   ┌─────────────┐   ┌──────────────┐
+   │  Next.js UI  │◀──┴──▶│  Postgres   │   │ Object Store │
+   │  + API routes│       └─────────────┘   │   (media)    │
+   └──────┬───────┘                         └──────────────┘
+          │
+          ▼  send() on the adapter — never a provider SDK directly
+```
+
+**Everything below the adapter line is transport-agnostic.** The queue, worker, database, API, and UI have no idea whether a message arrived over Baileys or a Meta webhook. That is what makes Phase B a swap rather than a rewrite.
+
+**Two processes, deliberately.** In Phase B the webhook receiver must return in milliseconds — anything slow happens in the worker, or Meta's retries drown you. In Phase A the Baileys socket must live in a long-running process and cannot be serverless, which is the same architectural requirement arriving for a different reason.
+
+---
+
+## 6. Tech stack
+
+| Layer | Choice | Note |
+|---|---|---|
+| Language | TypeScript, strict mode | |
+| App + API | Next.js (App Router) | UI and internal API in one deployment |
+| Database | PostgreSQL | |
+| ORM | Prisma | |
+| Queue | BullMQ on Redis | |
+| Worker | Standalone Node process | Must be long-running — not serverless |
+| Object storage | S3-compatible | For media |
+| Realtime | Server-Sent Events, or a hosted realtime service | New messages must appear without refresh |
+| Auth | Session-based, email + password to start | |
+| Validation | Zod at every boundary | |
+| Testing | Vitest | |
+
+**Deployment note:** the webhook receiver and worker need a persistent runtime. If the UI is deployed to a serverless platform, deploy the worker separately to a platform supporting long-running processes.
+
+---
+
+## 7. Data model
+
+Prisma-flavoured. Adjust naming to convention but keep the shape and the constraints.
+
+### 7.1 Tenancy and identity
+
+```prisma
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String
+  passwordHash   String
+  name           String
+  role           Role     @default(AGENT)
+  isOnline       Boolean  @default(false)
+  lastSeenAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+}
+
+enum Role {
+  ADMIN   // full access, manages channels, templates, users
+  AGENT   // sees assigned + unassigned conversations, sends messages
+}
+```
+
+### 7.2 Channels
+
+```prisma
+model Channel {
+  id                String   @id @default(cuid())
+  organizationId    String
+  displayName       String
+  phoneNumber       String   // E.164, display only
+  provider          String   @default("baileys")  // "baileys" | "cloud-api"
+  metaPhoneNumberId String?  @unique  // null in Phase A
+  metaWabaId        String?  // null in Phase A
+  sessionRef        String?  // Phase A: pointer to stored Baileys session state
+  accessTokenRef    String?  // Phase B: reference to secret store — NEVER the token itself
+  qualityRating     String?  // synced from Meta
+  messagingTier     String?  // synced from Meta
+  status            ChannelStatus @default(ACTIVE)
+  createdAt         DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+enum ChannelStatus { ACTIVE, DISCONNECTED, SUSPENDED }
+```
+
+> **Security:** access tokens must never sit in the database in plaintext or in application code. Use environment-based secrets or a secret manager. `accessTokenRef` holds a lookup key only.
+
+### 7.3 Contacts and conversations
+
+```prisma
+model Contact {
+  id             String   @id @default(cuid())
+  organizationId String
+  waId           String   // WhatsApp ID, digits only, no +
+  name           String?  // from Meta's contact profile
+  displayName    String?  // agent-editable override
+  customFields   Json     @default("{}")
+  isBlocked      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, waId])
+  @@index([organizationId])
+}
+
+model Conversation {
+  id                String   @id @default(cuid())
+  organizationId    String
+  channelId         String
+  contactId         String
+  assignedUserId    String?
+  status            ConversationStatus @default(OPEN)
+  lastMessageAt     DateTime?
+  lastInboundAt     DateTime?   // ← the 24h window is computed from this
+  unreadCount       Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  @@unique([channelId, contactId])
+  @@index([organizationId, status, lastMessageAt])
+  @@index([assignedUserId])
+}
+
+enum ConversationStatus { OPEN, DONE }
+```
+
+> **The window is derived, never stored as a boolean.** `isWindowOpen = lastInboundAt != null && now - lastInboundAt < 24h`. A stored flag will go stale and lie to your agents.
+
+### 7.4 Messages
+
+```prisma
+model Message {
+  id              String   @id @default(cuid())
+  organizationId  String
+  conversationId  String
+  provider          String            // "baileys" | "cloud-api"
+  providerMessageId String?  @unique  // wamid in Phase B, Baileys key.id in Phase A — the dedupe key
+  direction       Direction
+  type            MessageType
+  body            String?           // text content or caption
+  mediaId         String?           // FK to our stored media
+  templateName    String?           // if sent as a template
+  templatePayload Json?             // variables used
+  interactivePayload Json?          // button/list reply data
+  status          MessageStatus @default(PENDING)
+  errorCode       String?
+  errorMessage    String?
+  sentByUserId    String?           // null for inbound and system messages
+  metaTimestamp   DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([conversationId, metaTimestamp])
+  @@index([organizationId])
+}
+
+enum Direction { INBOUND, OUTBOUND }
+enum MessageType { TEXT, IMAGE, VIDEO, AUDIO, DOCUMENT, STICKER, LOCATION, CONTACTS, INTERACTIVE, TEMPLATE, BUTTON, REACTION, UNSUPPORTED }
+enum MessageStatus { PENDING, SENT, DELIVERED, READ, FAILED }
+```
+
+> **`UNSUPPORTED` is required.** Meta adds message types. When one arrives that we don't model, store it as `UNSUPPORTED` with the raw payload preserved and render a neutral placeholder. Never crash the ingest pipeline on an unknown type.
+
+Status only ever moves forward: `PENDING → SENT → DELIVERED → READ`, or into `FAILED`. Because status webhooks arrive out of order, **never downgrade a status.** Ignore a `SENT` update on a message already `READ`.
+
+### 7.5 Supporting entities
+
+```prisma
+model Media {
+  id             String   @id @default(cuid())
+  organizationId String
+  storageKey     String   // key in our object store
+  mimeType       String
+  fileName       String?
+  sizeBytes      Int?
+  metaMediaId    String?
+  createdAt      DateTime @default(now())
+}
+
+model Tag {
+  id             String @id @default(cuid())
+  organizationId String
+  name           String
+  color          String?
+
+  @@unique([organizationId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  @@id([contactId, tagId])
+}
+
+model Note {
+  id             String   @id @default(cuid())
+  organizationId String
+  contactId      String
+  authorUserId   String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([contactId])
+}
+
+model CustomFieldDefinition {
+  id             String @id @default(cuid())
+  organizationId String
+  key            String
+  label          String
+  type           FieldType
+  options        Json?    // for LIST type
+
+  @@unique([organizationId, key])
+}
+
+enum FieldType { TEXT, NUMBER, DATE, LIST }
+
+model Template {
+  id              String   @id @default(cuid())
+  organizationId  String
+  channelId       String
+  metaTemplateId  String?
+  name            String
+  language        String
+  category        String   // MARKETING | UTILITY | AUTHENTICATION
+  status          String   // synced from Meta — do not enum this, Meta adds values
+  components      Json     // full component structure as Meta returns it
+  rejectionReason String?
+  lastSyncedAt    DateTime?
+
+  @@unique([channelId, name, language])
+  @@index([organizationId])
+}
+
+model QuickReply {
+  id             String  @id @default(cuid())
+  organizationId String
+  shortcut       String
+  body           String
+  mediaId        String?
+
+  @@unique([organizationId, shortcut])
+}
+
+model WebhookEvent {
+  id           String   @id @default(cuid())
+  rawPayload   Json
+  signature    String
+  processedAt  DateTime?
+  error        String?
+  receivedAt   DateTime @default(now())
+}
+```
+
+> `WebhookEvent` stores every raw payload before processing. When something inexplicable happens in production — and it will — this table is how you find out what Meta actually sent. Retain 30 days.
+
+### 7.6 Tenancy enforcement
+
+Every read and write must filter by `organizationId` taken from the authenticated session, never from a request parameter. Implement this as a single data-access layer that takes `organizationId` as a required argument. Do not rely on developers remembering to add the filter.
+
+Add integration tests that attempt cross-tenant reads and assert they return nothing.
+
+---
+
+## 8. Transport integration
+
+### 8.0 The provider adapter — build this first
+
+Everything in this section exists to make Phase B a configuration change.
+
+#### 8.0.1 The interface
+
+Define in `src/providers/types.ts`. Both providers implement it exactly. No provider-specific methods, no optional escape hatches, no `if (provider === 'baileys')` anywhere outside `src/providers/`.
+
+```typescript
+export interface WhatsAppProvider {
+  readonly name: 'baileys' | 'cloud-api';
+
+  connect(channel: Channel): Promise<void>;
+  disconnect(channelId: string): Promise<void>;
+  getConnectionState(channelId: string): Promise<ConnectionState>;
+
+  sendText(p: SendTextParams): Promise<SendResult>;
+  sendMedia(p: SendMediaParams): Promise<SendResult>;
+  sendTemplate(p: SendTemplateParams): Promise<SendResult>;
+  markAsRead(channelId: string, providerMessageId: string): Promise<void>;
+
+  downloadMedia(channelId: string, ref: MediaReference): Promise<Buffer>;
+  uploadMedia(channelId: string, file: Buffer, mime: string): Promise<MediaReference>;
+
+  listTemplates(channelId: string): Promise<ProviderTemplate[]>;
+  createTemplate(channelId: string, t: TemplateDefinition): Promise<ProviderTemplate>;
+
+  // Providers push normalized events here; they never write to the DB themselves.
+  onInbound(handler: (e: NormalizedInboundEvent) => Promise<void>): void;
+  onStatusUpdate(handler: (e: NormalizedStatusEvent) => Promise<void>): void;
+}
+
+export type SendResult =
+  | { ok: true;  providerMessageId: string }
+  | { ok: false; retryable: boolean; code: string; message: string };
+```
+
+#### 8.0.2 The normalized event
+
+Both providers must produce this identical shape. **Model it on Meta's semantics, not Baileys'** — Meta is the destination.
+
+```typescript
+export interface NormalizedInboundEvent {
+  channelId: string;
+  providerMessageId: string;   // wamid in Phase B; Baileys key.id in Phase A
+  from: string;                // digits only, no '+', no '@s.whatsapp.net'
+  contactName: string | null;
+  timestamp: Date;
+  type: MessageType;           // our enum — map unknowns to UNSUPPORTED
+  body: string | null;
+  media: MediaReference | null;
+  interactive: InteractivePayload | null;
+  raw: unknown;                // always preserve the original payload
+}
+
+export interface NormalizedStatusEvent {
+  channelId: string;
+  providerMessageId: string;
+  status: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED';
+  timestamp: Date;
+  errorCode?: string;
+  errorMessage?: string;
+}
+```
+
+`providerMessageId` replaces `wamid` throughout the codebase. Rename the `Message.wamid` column to `providerMessageId` and add `provider` alongside it — a message sent in Phase A and one sent in Phase B are not in the same ID namespace, and mixing them silently breaks deduplication.
+
+#### 8.0.3 Selection
+
+One environment variable: `WHATSAPP_PROVIDER=baileys | cloud-api`. Resolve it once in a factory at startup. The rest of the application receives a `WhatsAppProvider` by injection and never inspects `.name`.
+
+#### 8.0.4 What the Baileys adapter must simulate
+
+Baileys does not enforce Meta's rules. The adapter must, so that Phase A behaviour matches Phase B exactly.
+
+| Rule | Baileys reality | What the adapter does |
+|---|---|---|
+| 24-hour window | Not enforced — free text always works | Adapter checks `lastInboundAt` and returns `{ ok: false, retryable: false, code: 'WINDOW_CLOSED' }` on a free-form send outside the window |
+| Templates | No concept of templates | `listTemplates` reads from our local `Template` table; `sendTemplate` renders variables into text and sends it as text; `createTemplate` writes locally with status `APPROVED` |
+| Status updates | Receipts arrive but with different naming | Map to our four statuses; enforce forward-only progression identically |
+| Media | Direct buffer download, no expiry | Still store to our object storage immediately, so Phase A and B code paths are the same |
+| Rate limits | None enforced | Apply a conservative self-imposed send throttle. Blasting messages over Baileys is the fastest way to get the test number banned |
+
+**The template simulation matters more than it looks.** It means agents in Phase A experience the real workflow — pick a template, fill variables, send — so the product gets tested properly and Phase B introduces no new UX.
+
+#### 8.0.5 Migration checklist for Phase B
+
+Keep this list current as the code grows:
+
+- [ ] Set `WHATSAPP_PROVIDER=cloud-api`
+- [ ] Connect a number to Cloud API (fresh or Coexistence)
+- [ ] Deploy the webhook receiver at a public HTTPS URL and register it with Meta
+- [ ] Configure app secret and verify token
+- [ ] Recreate templates in Meta and await approval — **local Phase A templates are not real templates**
+- [ ] Run a full manual test of the checklist in Section 13
+- [ ] Confirm no code outside `src/providers/` imports Baileys — enforce with a lint rule
+- [ ] Decide whether Phase A message history migrates or is discarded
+
+> Add an ESLint `no-restricted-imports` rule at M2 forbidding Baileys imports outside `src/providers/baileys/`. This is how the rule stays true six weeks in, when nobody remembers reading this file.
+
+---
+
+### 8.1 Phase B — Meta webhook receiver
+
+> Verify every endpoint, field, and parameter below against live documentation before implementing. Structure and behaviour are described here; exact shapes must be confirmed.
+
+**Verification (GET):** Meta sends a mode, a verify token, and a challenge as query parameters. Compare the token against our configured value and echo the challenge as plain text if it matches. Return 403 otherwise.
+
+**Events (POST):**
+
+1. Read the raw request body **before any JSON parsing** — signature verification is computed over raw bytes.
+2. Verify the HMAC-SHA256 signature header against the app secret. Reject with 401 on mismatch.
+3. Insert into `WebhookEvent`.
+4. Enqueue a job with the event ID.
+5. Return `200` immediately. Total handler time target: under 200ms.
+
+**Worker processing:**
+
+Payloads nest as entry → changes → value. A `value` may contain `messages` (inbound), `statuses` (delivery receipts), or `errors`. A single payload may contain several of each.
+
+For each inbound message:
+- Extract `wamid`. **If a message with this `wamid` exists, stop — this is a duplicate.**
+- Upsert the contact by `(organizationId, waId)`.
+- Upsert the conversation by `(channelId, contactId)`.
+- Set `lastInboundAt` and `lastMessageAt` to the message timestamp; increment `unreadCount`.
+- If the message carries media, enqueue a separate media-download job immediately.
+- Persist the message. Emit a realtime event to connected clients.
+
+For each status update:
+- Find the message by `wamid`. If absent, log and drop — status can arrive before we've persisted the send in rare races; a short retry is acceptable, infinite retry is not.
+- Apply the status **only if it moves forward** in the progression.
+- On `failed`, persist the error code and message and surface it in the UI.
+
+### 8.1b Phase A — Baileys inbound
+
+No webhooks. The worker holds a live socket per channel and subscribes to message events.
+
+- Session credentials persist to the database or object storage, keyed by channel — not to local disk, which does not survive a redeploy.
+- On disconnect, reconnect with exponential backoff. On auth failure, mark the channel `DISCONNECTED` and surface it in the admin UI. Do not retry an auth failure in a loop.
+- Normalize every event into `NormalizedInboundEvent` and push it to the same queue Phase B uses. **The worker downstream of the queue must be byte-identical between phases.**
+- Baileys emits history-sync and other bulk events on connect. Deduplicate on `providerMessageId` exactly as in Phase B — this is where duplicate handling gets its first real workout, which is useful.
+
+Keep this adapter deliberately thin. It is scaffolding.
+
+### 8.2 Outbound: sending
+
+All sends go through `provider.sendText()`, `sendMedia()`, or `sendTemplate()` — never a provider SDK directly. In Phase B the adapter targets a messages endpoint scoped to the channel's `metaPhoneNumberId`.
+
+**Before every send, server-side:**
+1. Confirm the user has access to this conversation.
+2. If the message is free-form, confirm the 24-hour window is open. If closed, reject with a structured error the UI can render as "The reply window has closed — send a template to reopen the conversation." **Do not rely on the client to enforce this.**
+3. Create the `Message` row with status `PENDING` first, then call Meta. This way a crash mid-send leaves a visible record rather than a lost message.
+4. On success, store the returned `wamid` and set status `SENT`.
+5. On failure, set `FAILED` with the error code and a human-readable message.
+
+**Message types to support in Tier 1:** text, image, video, audio, document, and template. Location and interactive sends are optional; interactive *receiving* is required.
+
+**Marking read:** when an agent opens a conversation, call Meta's mark-as-read endpoint for the latest inbound message so the customer sees blue ticks, and reset `unreadCount` locally.
+
+### 8.3 Media handling
+
+**Inbound:** webhook gives a media ID → request the download URL → download with an authenticated request → upload to our object storage → create a `Media` row → link it to the message. **This must happen in the worker within seconds of receipt.** The URL expires quickly; a delayed fetch means permanently lost media.
+
+**Outbound:** upload the file to Meta first, receive a media ID, then send the message referencing that ID. Also store our own copy so the thread renders after Meta's retention period lapses.
+
+Enforce file size and MIME type limits before upload — check current limits in live docs, they differ per media type.
+
+### 8.4 Template sync
+
+- On channel connect and on a scheduled interval (every 15 minutes is reasonable), fetch all templates for the WABA and upsert locally.
+- Register for template status update webhooks if available, so approvals and pauses reflect quickly. Keep polling as a fallback — do not depend solely on webhooks for state you need to be correct.
+- Template creation: submit to Meta, store the response, mark local status `PENDING`, let sync resolve the outcome.
+- **Never send a template whose local status is not `APPROVED`.** Check at send time, not just at selection time.
+
+### 8.5 Variable substitution
+
+Template bodies use positional variables. When an agent sends a template, the UI must present one input per variable, and the API must validate that the count of supplied values matches the count the template declares. A mismatch is a Meta error that is confusing to debug — catch it before the call.
+
+---
+
+## 9. Internal API surface
+
+Route handlers under `/api`. All require an authenticated session. All derive `organizationId` from the session.
+
+```
+GET    /api/conversations                 list — filters: status, assignedTo, channelId, tag, search, cursor
+GET    /api/conversations/:id             detail with contact + window state
+GET    /api/conversations/:id/messages    paginated, newest first, cursor-based
+POST   /api/conversations/:id/messages    send (text | media | template)
+POST   /api/conversations/:id/read        mark read
+PATCH  /api/conversations/:id             assign, unassign, set status
+
+GET    /api/contacts
+GET    /api/contacts/:id
+PATCH  /api/contacts/:id                  displayName, custom fields
+POST   /api/contacts/:id/tags
+DELETE /api/contacts/:id/tags/:tagId
+GET    /api/contacts/:id/notes
+POST   /api/contacts/:id/notes
+PATCH  /api/notes/:id
+DELETE /api/notes/:id
+
+GET    /api/templates                     filter by channel, status
+POST   /api/templates                     create + submit to Meta
+POST   /api/templates/sync                force a sync
+
+GET    /api/quick-replies
+POST   /api/quick-replies
+PATCH  /api/quick-replies/:id
+DELETE /api/quick-replies/:id
+
+GET    /api/channels                      admin only
+POST   /api/channels                      admin only — connect a number
+GET    /api/tags
+POST   /api/tags
+GET    /api/users                         admin only
+POST   /api/users/invite                  admin only
+
+GET    /api/events                        SSE stream for realtime updates
+
+POST   /api/webhooks/meta                 public, signature-verified
+GET    /api/webhooks/meta                 public, challenge verification
+```
+
+Every list endpoint is cursor-paginated. Offset pagination will break as message volume grows.
+
+---
+
+## 10. UI specification
+
+Three-pane layout, the standard for this product category, because agents move between conversations constantly and context switching costs money.
+
+### 10.1 Layout
+
+```
+┌────────┬──────────────────────┬────────────────────┐
+│  Nav   │   Conversation list  │   Thread + composer│  ← plus a
+│  rail  │   (filters, search)  │                    │    collapsible
+│        │                      │                    │    contact panel
+└────────┴──────────────────────┴────────────────────┘
+```
+
+### 10.2 Conversation list
+
+Each row: contact name (or number), last message preview, relative timestamp, unread badge, assigned agent avatar, channel indicator when more than one channel exists.
+
+Filters: All / Unassigned / Mine / Done · by channel · by tag · free-text search.
+Sort: most recent activity first.
+
+Show a subtle indicator when a conversation's 24-hour window is closing soon (under 2 hours) — agents plan their day around this.
+
+### 10.3 Thread
+
+Reverse-chronological, infinite scroll upward. Outbound right-aligned, inbound left. Each outbound message shows its status as a tick indicator, and a **clear, human-readable error** on failure — never a raw Meta error code alone.
+
+Render every message type: text, image (inline with lightbox), video (inline player), audio (player), document (filename + download), location (map link or coordinates), interactive replies (show which button or list item the customer chose), and unsupported types as a neutral placeholder.
+
+### 10.4 Composer — the most important component
+
+The composer has two mutually exclusive states, driven by server-provided window state:
+
+**Window open:** free text input, emoji, attachment, quick-reply insertion via a `/` shortcut, and a template button. Show remaining window time.
+
+**Window closed:** free text is disabled with a clear, non-technical explanation. The only action available is "Send a template," opening a picker of approved templates for this channel with variable inputs and a live preview.
+
+Never let an agent type a long message and only discover on send that it cannot be delivered. This is the difference between a tool people trust and one they work around.
+
+### 10.5 Contact panel
+
+Name (editable), phone, tags (add/remove inline), custom fields, notes with author and timestamp, assignment control, conversation status toggle.
+
+### 10.6 Admin screens
+
+Channels (connect a number, view quality rating and tier), Users (invite, set role, deactivate), Tags, Custom field definitions, Quick replies, Templates (list, status, create).
+
+### 10.7 Realtime
+
+New inbound messages, status changes, and assignment changes must appear without a page refresh for every user in the organisation viewing the affected conversation or list. Implement as SSE with a reconnect strategy; fall back to polling if the connection drops.
+
+---
+
+## 11. Build order
+
+Each milestone must run end-to-end before the next begins. "Done" means demonstrable, not merely compiling.
+
+### M1 — Skeleton and tenancy
+Next.js app, Postgres, Prisma, auth, Organization/User models, login, empty shell layout, role gate.
+**Done when:** two users in two organisations can log in and cannot see each other's data — proven by a passing cross-tenant test.
+
+### M2 — Provider adapter + ingestion (Phase A)
+Define the `WhatsAppProvider` interface and normalized event types **first**. Then: Baileys adapter with persisted session state, Redis, BullMQ, long-running worker, raw event persistence, dedupe on `providerMessageId`, contact/conversation upsert, message persistence. Add the ESLint rule forbidding Baileys imports outside `src/providers/baileys/`.
+**Done when:** a real message sent from a personal phone to the dedicated test number appears as a row in the `Message` table within two seconds; replaying the same event creates exactly one row; and a stub `cloud-api` provider implementing the same interface compiles and is selectable by env var without touching any code outside `src/providers/`.
+
+> The compiling stub is the real acceptance criterion here. If the Cloud API stub cannot slot in cleanly at M2, the abstraction is already wrong, and every later milestone will deepen the problem.
+
+### M3 — Read-only inbox
+Conversation list, thread view, all message types rendering, contact panel read-only, SSE realtime.
+**Done when:** a message sent from a phone appears in the open browser thread within two seconds with no refresh.
+
+### M4 — Outbound text
+Send endpoint, `PENDING` row before the Meta call, `wamid` capture, status webhook handling with forward-only progression, error surfacing, mark-as-read.
+**Done when:** an agent replies from the UI, the message arrives on the phone, and the tick indicator progresses to read.
+
+### M5 — The 24-hour window
+Server-side derivation, enforcement in the send endpoint, composer state switching, remaining-time display, closing-soon indicator.
+**Done when:** with a conversation whose last inbound is over 24 hours old, the composer is in closed state and a direct API call bypassing the UI is rejected with a structured error.
+
+### M6 — Media
+Inbound download-and-store pipeline, object storage, outbound upload and send, rendering for every media type.
+**Done when:** an image sent from a phone renders in the thread, and an image sent from the UI arrives on the phone. Both still render 24 hours later.
+
+### M7 — Templates
+Sync job, template list UI, picker with variable inputs and preview, template send, creation and submission flow, status display including rejection reasons.
+**Done when:** a template is sent to a conversation with a closed window and arrives correctly with variables substituted.
+
+### M8 — CRM layer
+Tags, notes, custom field definitions and values, contact editing, assignment, open/done status, quick replies with `/` shortcut.
+**Done when:** an agent can tag a contact, write a note, assign the conversation to a colleague, and insert a quick reply.
+
+### M9 — Search and hardening
+Conversation search, in-thread search, cursor pagination everywhere, structured logging, error boundaries, retry policy on the queue, admin channel screen with quality rating.
+**Done when:** search returns correct results across 10,000+ seeded messages in under a second, and the worker recovers cleanly from a forced restart mid-queue.
+
+### M10 — Phase B migration (do not start until M1–M9 are done and used)
+Implement the Cloud API provider against the existing interface: webhook receiver with signature verification and challenge handling, real template sync, Meta media upload/download, real error-code mapping. Work through the checklist in Section 8.0.5.
+**Done when:** flipping `WHATSAPP_PROVIDER` to `cloud-api` produces a fully working inbox with **zero changes to any file outside `src/providers/`**, and the full manual test checklist passes against a real Cloud API number.
+
+> If this milestone requires touching the UI, the API routes, or the worker, the adapter failed its purpose. Fix the abstraction rather than patching around it.
+
+---
+
+## 12. Non-functional requirements
+
+- **Correctness over features.** A dropped or duplicated message is worse than a missing feature.
+- Webhook handler responds in under 200ms at p95.
+- Conversation list loads in under one second at 10,000 conversations.
+- All external calls have explicit timeouts. No unbounded awaits.
+- Structured JSON logging with an organisation ID and correlation ID on every entry.
+- Secrets in environment or a secret manager, never in the database or source.
+- Message content is sensitive customer data. No message bodies in application logs.
+- Seed script generating realistic volume for local development.
+
+---
+
+## 13. Testing
+
+- Unit tests for window calculation, status progression, signature verification, and variable substitution — these four are where correctness bugs hide.
+- Integration tests for the webhook pipeline using recorded real payloads (capture them from `WebhookEvent` in a test environment; do not write them from imagination).
+- Cross-tenant isolation tests as described in 7.6.
+- A manual test checklist covering the full loop against a real number before each deploy.
+
+---
+
+## 14. Open decisions for the human
+
+Flag these; do not decide them unilaterally.
+
+1. **Which number is the Phase A test number.** Must be a dedicated number with no real partner or customer relationships attached. Confirm before M2.
+2. **Connection mode for Phase B** — a fresh number on Cloud API, or an existing number via Coexistence. Coexistence has behavioural limits that affect what the API can do; confirm before M10.
+3. **Object storage provider.**
+4. **Whether agents share one number or each have their own** — the schema supports both, but the UI emphasis differs significantly.
+5. **Data retention policy** for messages and media.
+6. **Whether Phase A message history carries over to Phase B**, or the migration starts clean.
+7. **Final product name.** "Chowk" is a working title; confirm before anything is printed, bought, or registered.
+
+---
+
+## 15. Final instruction
+
+Build M1 through M9 in order on Baileys. Keep every provider detail behind the adapter. Then migrate at M10.
+
+Verify Meta API details against live documentation. Ask when uncertain. Do not build anything listed in Section 2.2.
+
+A working inbox that never drops a message is worth more than a feature-complete system nobody trusts — and a clean adapter boundary is worth more than either, because it is the only thing standing between you and a rewrite.

@@ -12,7 +12,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 Start here. Read these before changing code:
 
-1. `context.md` — scope, constraints, data model and build order (read completely)
+1. `context.md` — scope, constraints, data model and build order (read completely; original brief: `problem.txt`)
 2. `architecture.md` and `flow.md` — how the pieces fit together
 3. `implementation-plan.md` — milestones
 4. `decisions.md` — decisions already taken
